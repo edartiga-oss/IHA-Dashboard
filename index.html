@@ -2849,13 +2849,13 @@ async function syncCloudState() {
 }
 
 // Fetches the latest Master Schedule .xlsx from the Apps Script Web App
-// (which scans a fixed Drive folder and serves the most recently modified
-// file as base64 JSON). On success, feeds the decoded buffer into the
-// same processWorkbookBuffer() that the file picker uses, so rendering is
-// identical to a local load.
+// (?action=masterFetch). The script scans a fixed Drive folder, picks the
+// most recently-modified .xlsx, and returns it base64-encoded. On success
+// we decode the bytes and feed them into the same processWorkbookBuffer()
+// the file picker uses, so rendering is identical to a local load.
 async function fetchWorkbookFromDrive() {
   const base = getCloudStateUrl();
-  const url = base + (base.includes('?') ? '&' : '?') + 'type=workbook';
+  const url = base + (base.includes('?') ? '&' : '?') + 'action=masterFetch';
   const content = document.getElementById('content');
   if (content) {
     content.innerHTML =
@@ -2871,8 +2871,11 @@ async function fetchWorkbookFromDrive() {
     catch (_) {
       throw new Error('Workbook response is not JSON.\n\nFirst bytes:\n' + (text.length > 240 ? text.slice(0, 240) + '…' : text));
     }
-    if (!parsed || parsed.ok === false || !parsed.base64) {
-      throw new Error('Web App returned an unexpected shape for workbook:\n\n' + JSON.stringify(parsed).slice(0, 240));
+    if (!parsed || parsed.ok === false) {
+      throw new Error(parsed && parsed.error ? parsed.error : 'Web App returned { ok: false } with no error message.');
+    }
+    if (!parsed.base64) {
+      throw new Error('Web App response is missing base64 payload.\n\n' + JSON.stringify(parsed).slice(0, 240));
     }
     // Decode base64 → Uint8Array. atob yields a binary string of char codes
     // 0-255; we copy those into a typed array byte-by-byte so XLSX.read
@@ -2880,7 +2883,7 @@ async function fetchWorkbookFromDrive() {
     const bin = atob(parsed.base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const displayName = parsed.filename || 'Master IHA workbook (from Drive)';
+    const displayName = parsed.name || 'Master IHA workbook (from Drive)';
     processWorkbookBuffer(bytes.buffer, displayName);
     return true;
   } catch (err) {
