@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v12</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v13</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -11727,7 +11727,6 @@ function renderListSectionHtml(viewKey, opts = {}) {
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06);">
               ${contractUsedCell}
               ${b.usedCount > 0 ? `<div style="color:var(--ink-mute); font-size:10px; font-weight:500;">${b.usedCount} in window</div>` : ''}
-              ${b.rollforward > 0 ? `<div style="color:#c62828; font-size:10px; font-weight:500;" title="BY→OY1 rollforward subtracted from Credit Used to match the rollforward-adjusted Incurred shown on the OY1 subtotal">−${escapeHtml(fmtMoney2dp(b.rollforward))} BY rollforward</div>` : ''}
             </td>
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06);">${remainingCell}</td>
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
@@ -11814,7 +11813,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grand.total - grand.incurred))}</span></td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700; ${grand.descope > 0 ? 'color:#c62828;' : ''}"><span class="mono">${escapeHtml(fmtMoney2dp(grand.descope))}</span>${grand.descopeCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.descopeCount} descoped</div>` : ''}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grandAvailable))}</span></td>
-          <td style="padding: 8px 10px; text-align:right; font-weight:700;">${grandContractUsedCell}${grand.usedCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.usedCount} in window</div>` : ''}${grand.rollforward > 0 ? `<div style="color:#c62828; font-weight:500; font-size:10px;">−${escapeHtml(fmtMoney2dp(grand.rollforward))} BY rollforward</div>` : ''}</td>
+          <td style="padding: 8px 10px; text-align:right; font-weight:700;">${grandContractUsedCell}${grand.usedCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.usedCount} in window</div>` : ''}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;">${grandRemainingCell}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);"><span class="mono">${escapeHtml(fmtMoney2dp(grand.newTotal))}</span></td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grand.newIncurred))}</span></td>
