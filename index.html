@@ -2422,8 +2422,11 @@
     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
       Load Workbook
     </button>
-    <button class="upload-btn" onclick="loadFromCloud()" title="Download the latest Master Schedule directly from Google Drive">
+    <button class="upload-btn" onclick="loadFromCloud()" data-cloud-url-target title="Download the latest Master Schedule directly from Google Drive">
       Load from Cloud
+    </button>
+    <button class="upload-btn" onclick="setCloudWorkbookUrl()" title="Set / change the Apps Script Web App URL used by Load from Cloud" style="background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);padding:6px 10px;">
+      ⚙
     </button>
   </div>
 </header>
@@ -2434,7 +2437,7 @@
     <p>Drop in your latest <strong>Master IHA Projected Schedule</strong> spreadsheet. The viewer reads only the <strong>AllSites</strong> tab and generates the dashboard, sites list, and variation views from it.</p>
     <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
     <button class="big-btn" onclick="loadFromCloud()" style="margin-left:0.5rem;">Load from Cloud</button>
-    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest Master Schedule from Google Drive.</div>
+    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest Master Schedule from Google Drive. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
   </div>
 </div>
 
@@ -2730,8 +2733,44 @@ function displayName(s) {
 // underlying file does not need to be publicly shared. The response
 // may be raw .xlsx bytes or a base64-encoded payload (optionally
 // wrapped in JSON) — extractWorkbookBytes() handles both shapes.
-const CLOUD_WORKBOOK_URL = 'https://script.google.com/macros/s/AKfycbw4KaPT09sZltWpuOrqLvN0weOeT0VfBx-nDR_hQAZCNIRa8YI-wTR-frNGh67wA7Y/exec';
+const DEFAULT_CLOUD_WORKBOOK_URL = 'https://script.google.com/macros/s/AKfycbw4KaPT09sZltWpuOrqLvN0weOeT0VfBx-nDR_hQAZCNIRa8YI-wTR-frNGh67wA7Y/exec';
+const CLOUD_URL_STORAGE_KEY = 'usar.cloudWorkbookUrl';
 const CLOUD_WORKBOOK_NAME = 'Master Schedule (Google Drive)';
+
+function getCloudWorkbookUrl() {
+  try {
+    const stored = localStorage.getItem(CLOUD_URL_STORAGE_KEY);
+    if (stored && /^https?:\/\//i.test(stored)) return stored;
+  } catch (_) { /* localStorage may be unavailable */ }
+  return DEFAULT_CLOUD_WORKBOOK_URL;
+}
+
+function setCloudWorkbookUrl() {
+  const current = getCloudWorkbookUrl();
+  const next = window.prompt(
+    'Enter the Apps Script Web App URL to use for "Load from Cloud".\n' +
+    '(Leave blank to reset to the default.)',
+    current
+  );
+  if (next === null) return; // cancelled
+  const trimmed = next.trim();
+  try {
+    if (trimmed === '') {
+      localStorage.removeItem(CLOUD_URL_STORAGE_KEY);
+    } else if (/^https?:\/\//i.test(trimmed)) {
+      localStorage.setItem(CLOUD_URL_STORAGE_KEY, trimmed);
+    } else {
+      window.alert('That doesn\'t look like a valid URL — must start with http:// or https://');
+      return;
+    }
+  } catch (e) {
+    window.alert('Could not save URL: ' + e.message);
+    return;
+  }
+  const active = getCloudWorkbookUrl();
+  const titleEl = document.querySelector('[data-cloud-url-target]');
+  if (titleEl) titleEl.title = 'Active Web App URL: ' + active;
+}
 
 document.getElementById('fileInput').addEventListener('change', handleFile);
 
@@ -2746,35 +2785,79 @@ function handleFile(e) {
   reader.readAsArrayBuffer(file);
 }
 
-// Apps Script web apps can't stream raw binary cleanly via
-// ContentService, so the response may arrive as base64 (sometimes
-// wrapped in JSON like {data: "<b64>"}). Sniff for the XLSX zip magic
-// first; if absent, fall back to base64 decode (with JSON unwrap).
-function extractWorkbookBytes(arrayBuffer) {
-  const u8 = new Uint8Array(arrayBuffer);
-  const isZip = u8.length >= 4 && u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04;
-  if (isZip) return arrayBuffer;
-  const text = new TextDecoder('utf-8').decode(arrayBuffer).trim();
-  let b64 = text;
-  if (text.startsWith('{') || text.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(text);
-      b64 = parsed.data || parsed.base64 || parsed.bytes || parsed.content || parsed.file || '';
-    } catch (_) { /* fall through to raw-base64 attempt */ }
-  }
-  b64 = String(b64).replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
-  if (!b64) throw new Error('Web App response was neither an .xlsx nor a recognized base64 payload.');
-  const binStr = atob(b64);
+// Try to base64-decode a string and return the bytes if the result
+// looks like an .xlsx (zip magic PK\x03\x04). Returns null otherwise.
+function tryDecodeXlsxBase64(s) {
+  if (typeof s !== 'string') return null;
+  const cleaned = s.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+  if (cleaned.length < 100) return null;
+  if (!/^[A-Za-z0-9+/_-]+=*$/.test(cleaned)) return null;
+  // Convert URL-safe base64 to standard if needed
+  const std = cleaned.replace(/-/g, '+').replace(/_/g, '/');
+  let binStr;
+  try { binStr = atob(std); } catch (_) { return null; }
+  if (binStr.length < 4) return null;
+  if (binStr.charCodeAt(0) !== 0x50 || binStr.charCodeAt(1) !== 0x4B ||
+      binStr.charCodeAt(2) !== 0x03 || binStr.charCodeAt(3) !== 0x04) return null;
   const out = new Uint8Array(binStr.length);
   for (let i = 0; i < binStr.length; i++) out[i] = binStr.charCodeAt(i);
   return out.buffer;
 }
 
+// Walk an arbitrary JSON value looking for the first string that
+// base64-decodes to xlsx bytes. Apps Script wrappers vary widely
+// ({data}, {bytes}, {result}, {payload: {file: ...}}, etc.) so we
+// search rather than guess key names.
+function findXlsxBytesInJson(value) {
+  if (typeof value === 'string') return tryDecodeXlsxBase64(value);
+  if (Array.isArray(value)) {
+    for (const v of value) { const r = findXlsxBytesInJson(v); if (r) return r; }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const k of Object.keys(value)) {
+      const r = findXlsxBytesInJson(value[k]);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+// Apps Script web apps can't stream raw binary cleanly via
+// ContentService, so the response may arrive as base64 (sometimes
+// wrapped in JSON like {data: "<b64>"}). Sniff for the XLSX zip magic
+// first; if absent, recursively search any JSON shape for a base64
+// string that decodes to xlsx; otherwise try the raw text as base64.
+function extractWorkbookBytes(arrayBuffer) {
+  const u8 = new Uint8Array(arrayBuffer);
+  const isZip = u8.length >= 4 && u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04;
+  if (isZip) return arrayBuffer;
+  const text = new TextDecoder('utf-8').decode(arrayBuffer).trim();
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      const found = findXlsxBytesInJson(parsed);
+      if (found) return found;
+    } catch (_) { /* not JSON after all */ }
+  }
+  const raw = tryDecodeXlsxBase64(text);
+  if (raw) return raw;
+  // Build a preview of what came back so the user can debug.
+  const preview = text.length > 240 ? text.slice(0, 240) + '…' : text;
+  const looksLikeLogin = /accounts\.google\.com|signin|sign in|login/i.test(text);
+  const hint = looksLikeLogin
+    ? ' The response looks like a Google sign-in page — make sure the Web App is deployed with "Who has access: Anyone".'
+    : '';
+  const err = new Error('Web App response was neither an .xlsx nor a recognized base64 payload.' + hint + '\n\nFirst bytes of response:\n' + preview);
+  throw err;
+}
+
 async function loadFromCloud() {
+  const url = getCloudWorkbookUrl();
   document.getElementById('content').innerHTML =
     '<div class="empty"><h2>Downloading latest workbook from Google Drive...</h2></div>';
   try {
-    const resp = await fetch(CLOUD_WORKBOOK_URL, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
     const buf = await resp.arrayBuffer();
     if (buf.byteLength < 256) {
@@ -2783,11 +2866,15 @@ async function loadFromCloud() {
     const wbBytes = extractWorkbookBytes(buf);
     processWorkbookBuffer(wbBytes, CLOUD_WORKBOOK_NAME);
   } catch (err) {
+    const usingDefault = url === DEFAULT_CLOUD_WORKBOOK_URL;
     document.getElementById('content').innerHTML =
       `<div class="empty"><h2>Cloud load failed</h2>` +
-      `<p>${escapeHtml(err.message)}</p>` +
-      `<p class="hint">The Apps Script Web App must be deployed with <strong>Execute as: Me</strong> and <strong>Who has access: Anyone</strong>. ` +
-      `If the network blocks <code>script.google.com</code>, use <em>Load Workbook</em> with a local copy instead.</p></div>`;
+      `<p style="white-space:pre-wrap;text-align:left;max-width:720px;margin:0 auto;">${escapeHtml(err.message)}</p>` +
+      `<p class="hint">Active Web App URL: <code style="word-break:break-all;">${escapeHtml(url)}</code>` +
+      (usingDefault ? '' : ' <em>(custom)</em>') + `</p>` +
+      `<p class="hint">The Apps Script Web App must be deployed with <strong>Execute as: Me</strong> and <strong>Who has access: Anyone</strong>, and its <code>doGet</code> must return the .xlsx bytes (raw or base64, optionally wrapped in JSON).</p>` +
+      `<p><button class="big-btn" onclick="setCloudWorkbookUrl()">Set Web App URL</button></p>` +
+      `</div>`;
     console.error(err);
   }
 }
