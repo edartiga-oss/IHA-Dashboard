@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v5</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v6</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -6696,6 +6696,34 @@ const SITES_LIST_COLS = [
     filterType: 'numRange',
     filterValue: s => (Number(s.cost) || 0) - (Number(s.incurredCost) || 0),
   },
+  // Credit Used — per-row contribution to the summary box's "Contract
+  // Credit Used" figure. Blank unless the row is tinted green by the
+  // active highlight window (PSC or Final Report approved in window);
+  // when green, equals Total Cost − Incurred Cost so the column total
+  // matches the summary box exactly. null Total Cost is treated as $0,
+  // letting incurred-only clone rows contribute their negative slice
+  // (consistent with the summary's row-level math).
+  { key: 'creditUsed', label: 'Credit Used', cls: 'num',
+    get: s => {
+      const pred = getHighlightPredicate();
+      if (!pred || pred(s) !== 'green') return '';
+      const c = Number(s.cost) || 0;
+      const i = Number(s.incurredCost) || 0;
+      return fmtMoney2dp(c - i);
+    },
+    sortGet: s => {
+      const pred = getHighlightPredicate();
+      if (!pred || pred(s) !== 'green') return null;
+      return (Number(s.cost) || 0) - (Number(s.incurredCost) || 0);
+    },
+    summable: true,
+    filterType: 'numRange',
+    filterValue: s => {
+      const pred = getHighlightPredicate();
+      if (!pred || pred(s) !== 'green') return null;
+      return (Number(s.cost) || 0) - (Number(s.incurredCost) || 0);
+    },
+  },
   { key: 'cih',          label: 'CIH',                 cls: 'num',
     get: s => s.cih      == null ? '' : fmtMoney2dp(s.cih),
     sortGet: s => s.cih, summable: true,
@@ -7581,7 +7609,7 @@ const LIST_VIEWS = {
     // State), and the full financial breakdown.
     defaultOrder: () => [
       'id', 'rd', 'year', 'priority', 'team', 'state', 'clin',
-      'cost', 'incurredCost', 'contractValueAfterIncurred', 'creditAvailable', 'cih', 'leadIH', 'addCost', 'teamCost', 'qaCheck',
+      'cost', 'incurredCost', 'contractValueAfterIncurred', 'creditAvailable', 'creditUsed', 'cih', 'leadIH', 'addCost', 'teamCost', 'qaCheck',
     ],
     showTotalsRow: true, // sum every numeric (sortGet-defined) column at the top
     groupByRd: true,     // group rows under collapsible RD subheaders
@@ -7699,6 +7727,10 @@ function loadListViewColumnOrder(viewKey) {
       // picker.
       arr = insertAfter(arr, 'contractValueAfterIncurred', 'incurredCost');
       arr = insertAfter(arr, 'creditAvailable', 'contractValueAfterIncurred');
+      // Credit Used lands immediately after Credit Available so existing
+      // users see the new per-row figure that mirrors the summary box's
+      // Contract Credit Used total without using the Columns picker.
+      arr = insertAfter(arr, 'creditUsed', 'creditAvailable');
       arr = insertAfter(arr, 'qaCheck', 'teamCost');
       // Strip any descope columns previously persisted in the saved
       // order — these are now gated behind the "Show Descope"
