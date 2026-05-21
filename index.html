@@ -2436,7 +2436,11 @@
   <div class="empty">
     <h2>No workbook loaded</h2>
     <p>Drop in your latest <strong>Master IHA Projected Schedule</strong> spreadsheet. The viewer reads only the <strong>AllSites</strong> tab and generates the dashboard, sites list, and variation views from it.</p>
-    <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
+      <button class="big-btn" onclick="fetchWorkbookFromDrive()">Load from Cloud</button>
+    </div>
+    <div id="cloudFilePreview" class="hint" style="margin-top:14px;">Checking the cloud for the latest workbook…</div>
     <div class="hint">All processing happens locally in your browser — nothing is uploaded. Once a workbook is loaded, click <em>Sync State</em> to fetch the latest edits/snapshot from the team's Apps Script Web App. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
   </div>
 </div>
@@ -2904,15 +2908,42 @@ async function fetchWorkbookFromDrive() {
   }
 }
 
-// Auto-load on page open: pull the latest workbook from Drive, then layer
-// the state JSON on top. Both flow through the same Apps Script Web App
-// (the workbook endpoint just adds ?type=workbook). The file picker stays
-// available as a fallback if the Drive fetch fails or the user wants to
-// inspect a local copy.
-window.addEventListener('DOMContentLoaded', async () => {
-  const ok = await fetchWorkbookFromDrive();
-  if (ok) syncCloudState();
-});
+// Lightweight peek at what the cloud currently has — fires masterInfo
+// (filename + mtime + size, no base64 payload) so the empty state can
+// preview the file the user would download if they click "Load from
+// Cloud". Runs on page open, then the user decides whether to pull the
+// full workbook. Doesn't touch state — that still happens via the
+// Sync State button or after a workbook loads.
+async function peekCloudWorkbook() {
+  const el = document.getElementById('cloudFilePreview');
+  if (!el) return;
+  const base = getCloudStateUrl();
+  const url = base + (base.includes('?') ? '&' : '?') + 'action=masterInfo';
+  try {
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const text = await resp.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || parsed.ok === false) {
+      throw new Error(parsed && parsed.error ? parsed.error : 'unexpected response');
+    }
+    if (parsed.empty) {
+      el.innerHTML = '<em>No .xlsx found in the configured Drive folder.</em>';
+      return;
+    }
+    const mtime = parsed.mtime ? new Date(parsed.mtime) : null;
+    const when = mtime && !isNaN(mtime) ? mtime.toISOString().slice(0, 10) : '';
+    const sizeKb = typeof parsed.size === 'number' ? ' · ' + Math.round(parsed.size / 1024).toLocaleString() + ' KB' : '';
+    el.innerHTML = 'Latest in cloud: <strong>' + escapeHtml(parsed.name || '(unnamed)') + '</strong>'
+      + (when ? ' · updated ' + escapeHtml(when) : '')
+      + sizeKb;
+  } catch (err) {
+    console.warn('[cloud peek] failed', err);
+    el.innerHTML = 'Cloud peek failed: ' + escapeHtml(err.message);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => { peekCloudWorkbook(); });
 
 document.getElementById('fileInput').addEventListener('change', handleFile);
 
