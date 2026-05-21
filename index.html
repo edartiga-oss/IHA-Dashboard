@@ -2411,6 +2411,9 @@
     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
       Load Workbook
     </button>
+    <button class="upload-btn" onclick="loadFromCloud()" title="Download the latest Master Schedule directly from Google Drive">
+      Load from Cloud
+    </button>
   </div>
 </header>
 
@@ -2419,7 +2422,8 @@
     <h2>No workbook loaded</h2>
     <p>Drop in your latest <strong>Master IHA Projected Schedule</strong> spreadsheet. The viewer reads only the <strong>AllSites</strong> tab and generates the dashboard, sites list, and variation views from it.</p>
     <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
-    <div class="hint">All processing happens locally in your browser — nothing is uploaded.</div>
+    <button class="big-btn" onclick="loadFromCloud()" style="margin-left:0.5rem;">Load from Cloud</button>
+    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest Master Schedule from Google Drive.</div>
   </div>
 </div>
 
@@ -2710,6 +2714,15 @@ function displayName(s) {
 // ====================================================================
 // FILE LOADING
 // ====================================================================
+// Google Drive download URL for the live Master Schedule. The file ID
+// is taken from the share link the team uses; the `/export?format=xlsx`
+// endpoint returns the workbook bytes when the file is shared as
+// "Anyone with the link can view" (required for an unauthenticated
+// browser fetch — there's no server-side credential in this app).
+const CLOUD_WORKBOOK_ID = '16SPiqOBRwbSfcM5D3vqe2pxihskWwyRH';
+const CLOUD_WORKBOOK_URL = `https://docs.google.com/spreadsheets/d/${CLOUD_WORKBOOK_ID}/export?format=xlsx`;
+const CLOUD_WORKBOOK_NAME = 'Master Schedule (Google Drive)';
+
 document.getElementById('fileInput').addEventListener('change', handleFile);
 
 function handleFile(e) {
@@ -2719,9 +2732,34 @@ function handleFile(e) {
     '<div class="empty"><h2>Reading workbook...</h2></div>';
 
   const reader = new FileReader();
-  reader.onload = (evt) => {
+  reader.onload = (evt) => processWorkbookBuffer(evt.target.result, file.name);
+  reader.readAsArrayBuffer(file);
+}
+
+async function loadFromCloud() {
+  document.getElementById('content').innerHTML =
+    '<div class="empty"><h2>Downloading latest workbook from Google Drive...</h2></div>';
+  try {
+    const resp = await fetch(CLOUD_WORKBOOK_URL, { cache: 'no-store', credentials: 'omit' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const buf = await resp.arrayBuffer();
+    if (buf.byteLength < 1024) {
+      throw new Error('Response too small to be a workbook — the file may not be shared publicly.');
+    }
+    processWorkbookBuffer(buf, CLOUD_WORKBOOK_NAME);
+  } catch (err) {
+    document.getElementById('content').innerHTML =
+      `<div class="empty"><h2>Cloud load failed</h2>` +
+      `<p>${escapeHtml(err.message)}</p>` +
+      `<p class="hint">The Google Drive file must be shared as <strong>Anyone with the link can view</strong>. ` +
+      `If sharing is restricted or your network blocks <code>docs.google.com</code>, use <em>Load Workbook</em> with a local copy instead.</p></div>`;
+    console.error(err);
+  }
+}
+
+function processWorkbookBuffer(arrayBuffer, displayName) {
     try {
-      const data = new Uint8Array(evt.target.result);
+      const data = new Uint8Array(arrayBuffer);
       const wb = XLSX.read(data, { type: 'array', cellDates: false });
       if (!wb.SheetNames.includes(SHEET_NAME)) {
         document.getElementById('content').innerHTML =
@@ -2769,7 +2807,7 @@ function handleFile(e) {
       if (reportStatusData) loadedSources.push('Report Status');
 
       document.getElementById('fileInfo').innerHTML =
-        `<div class="fname">${escapeHtml(file.name)}</div><div>${allSites.length} sites loaded</div>`;
+        `<div class="fname">${escapeHtml(displayName)}</div><div>${allSites.length} sites loaded</div>`;
       document.getElementById('settingsBtn').style.display = 'inline-block';
       // Update the header tagline to reflect what was actually loaded
       const taglineEl = document.getElementById('headerTag');
@@ -2782,8 +2820,6 @@ function handleFile(e) {
         `<div class="empty"><h2>Failed to read file</h2><p>${escapeHtml(err.message)}</p></div>`;
       console.error(err);
     }
-  };
-  reader.readAsArrayBuffer(file);
 }
 
 function parseAllSites(ws) {
