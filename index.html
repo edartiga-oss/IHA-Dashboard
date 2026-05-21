@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v7</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v8</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -6698,15 +6698,19 @@ const SITES_LIST_COLS = [
   },
   // Credit Used — per-row contribution to the summary box's "Contract
   // Credit Used" figure. Blank unless the row is tinted green by the
-  // active highlight window (PSC or Final Report approved in window);
-  // when green, equals Total Cost − Incurred Cost so the column total
-  // matches the summary box exactly. null Total Cost is treated as $0,
-  // letting incurred-only clone rows contribute their negative slice
-  // (consistent with the summary's row-level math).
+  // active highlight window (PSC or Final Report approved in window).
+  // BY sites whose incurred rolls forward to OY1 (completely descoped
+  // OR incurred-only clones) are also blank: their incurred is moved
+  // out of the BY books to OY1 via the rollforward and is accounted
+  // for in the summary box's "−BY rollforward" subtraction. Showing
+  // them here as a negative Credit Used would double-count the same
+  // dollar. When green and not a rollforward source, equals Total Cost
+  // − Incurred Cost so the column total matches the summary exactly.
   { key: 'creditUsed', label: 'Credit Used', cls: 'num',
     get: s => {
       const pred = getHighlightPredicate();
       if (!pred || pred(s) !== 'green') return '';
+      if (siteRollsForwardToOy1(s)) return '';
       const c = Number(s.cost) || 0;
       const i = Number(s.incurredCost) || 0;
       return fmtMoney2dp(c - i);
@@ -6714,6 +6718,7 @@ const SITES_LIST_COLS = [
     sortGet: s => {
       const pred = getHighlightPredicate();
       if (!pred || pred(s) !== 'green') return null;
+      if (siteRollsForwardToOy1(s)) return null;
       return (Number(s.cost) || 0) - (Number(s.incurredCost) || 0);
     },
     summable: true,
@@ -6721,6 +6726,7 @@ const SITES_LIST_COLS = [
     filterValue: s => {
       const pred = getHighlightPredicate();
       if (!pred || pred(s) !== 'green') return null;
+      if (siteRollsForwardToOy1(s)) return null;
       return (Number(s.cost) || 0) - (Number(s.incurredCost) || 0);
     },
   },
@@ -7449,6 +7455,22 @@ function computeBaseYearRollforward(sites) {
     }
   }
   return total;
+}
+
+// Whether this site is a source of the BY→OY1 incurred rollforward.
+// Mirrors the predicate inside computeBaseYearRollforward — Base Year
+// sites that are either completely descoped (red) or are incurred-
+// only clones contribute their incurred to OY1's books. Used by the
+// row-level Credit Used column and the summary box's Contract Credit
+// Used calc to skip these sites from the green-row sum: their
+// incurred has been rolled away, so counting it as negative Credit
+// Used would double-deduct what the "−BY rollforward" subtraction
+// already handles.
+function siteRollsForwardToOy1(s) {
+  if (!s) return false;
+  const yr = String(s.year || '').trim().toLowerCase();
+  if (yr !== 'base year') return false;
+  return siteIsCompletelyDescoped(s) || s._scopeChangesIncurredOnly === true;
 }
 
 // "Confirmed scheduled scope variation" — sites that should be
@@ -11494,7 +11516,15 @@ function renderListSectionHtml(viewKey, opts = {}) {
         b.descope += cost;
         b.descopeCount++;
       }
-      if (summaryHighlightPred && summaryHighlightPred(s) === 'green') {
+      // BY rollforward sources (descoped BY or BY incurred-only clones)
+      // are excluded from b.used because their incurred has been moved
+      // out of BY's books into OY1's via the rollforward. Counting them
+      // here would clash with the b.rollforward subtraction below — and
+      // for green incurred-only clones specifically, would double-deduct
+      // the same dollar (once as (0 − incurred) in b.used, once as
+      // +incurred in b.rollforward).
+      const rollsForward = siteRollsForwardToOy1(s);
+      if (summaryHighlightPred && summaryHighlightPred(s) === 'green' && !rollsForward) {
         // Contract Credit Used per row is Total Cost − Incurred Cost,
         // not raw Total Cost. Incurred is already subtracted once from
         // every visible row to form Initial Credit Available; counting
@@ -11502,18 +11532,13 @@ function renderListSectionHtml(viewKey, opts = {}) {
         b.used += cost - incurred;
         b.usedCount++;
       }
-      // Per-RD BY→OY1 rollforward: Base Year sites that are completely
-      // descoped (or are incurred-only clones) contribute their
-      // incurred to a rollforward pool that's added to OY1's subtotal
-      // display. The displayed OY1 Incurred is therefore raw +
-      // rollforward, while green OY1 rows' Credit Used contribution
-      // still uses raw per-row incurred — over-recognizing credit
-      // by exactly the rollforward amount. Subtracted from b.used
-      // below so the summary reflects the rollforward-adjusted
-      // incurred picture, matching what the user sees in the
+      // Per-RD BY→OY1 rollforward total: BY sites that are completely
+      // descoped or are incurred-only clones contribute their incurred
+      // to a pool that's added to OY1's subtotal display. Subtracted
+      // from b.used below so Remaining Credit reflects the rollforward-
+      // adjusted incurred picture, matching what the user sees in the
       // BY/OY1 row annotations.
-      const yr = String(s.year || '').trim().toLowerCase();
-      if (yr === 'base year' && (siteIsCompletelyDescoped(s) || s._scopeChangesIncurredOnly === true)) {
+      if (rollsForward) {
         b.rollforward += incurred;
       }
     }
