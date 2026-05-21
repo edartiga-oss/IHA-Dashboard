@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v1</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v2</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -2436,7 +2436,11 @@
   <div class="empty">
     <h2>No workbook loaded</h2>
     <p>Drop in your latest <strong>Master IHA Projected Schedule</strong> spreadsheet. The viewer reads only the <strong>AllSites</strong> tab and generates the dashboard, sites list, and variation views from it.</p>
-    <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
+      <button class="big-btn" onclick="fetchWorkbookFromDrive()">Load from Cloud</button>
+    </div>
+    <div id="cloudFilePreview" class="hint" style="margin-top:14px;">Checking the cloud for the latest workbook…</div>
     <div class="hint">All processing happens locally in your browser — nothing is uploaded. Once a workbook is loaded, click <em>Sync State</em> to fetch the latest edits/snapshot from the team's Apps Script Web App. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
   </div>
 </div>
@@ -2847,6 +2851,99 @@ async function syncCloudState() {
     console.error(err);
   }
 }
+
+// Fetches the latest Master Schedule .xlsx from the Apps Script Web App
+// (?action=masterFetch). The script scans a fixed Drive folder, picks the
+// most recently-modified .xlsx, and returns it base64-encoded. On success
+// we decode the bytes and feed them into the same processWorkbookBuffer()
+// the file picker uses, so rendering is identical to a local load.
+async function fetchWorkbookFromDrive() {
+  const base = getCloudStateUrl();
+  const url = base + (base.includes('?') ? '&' : '?') + 'action=masterFetch';
+  const content = document.getElementById('content');
+  if (content) {
+    content.innerHTML =
+      '<div class="empty"><h2>Loading latest workbook from Drive…</h2>' +
+      '<p class="hint">Fetching the most recently modified .xlsx from the team folder.</p></div>';
+  }
+  try {
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const text = await resp.text();
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (_) {
+      throw new Error('Workbook response is not JSON.\n\nFirst bytes:\n' + (text.length > 240 ? text.slice(0, 240) + '…' : text));
+    }
+    if (!parsed || parsed.ok === false) {
+      throw new Error(parsed && parsed.error ? parsed.error : 'Web App returned { ok: false } with no error message.');
+    }
+    if (!parsed.base64) {
+      throw new Error('Web App response is missing base64 payload.\n\n' + JSON.stringify(parsed).slice(0, 240));
+    }
+    // Decode base64 → Uint8Array. atob yields a binary string of char codes
+    // 0-255; we copy those into a typed array byte-by-byte so XLSX.read
+    // sees the same bytes a local FileReader would.
+    const bin = atob(parsed.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const displayName = parsed.name || 'Master IHA workbook (from Drive)';
+    processWorkbookBuffer(bytes.buffer, displayName);
+    return true;
+  } catch (err) {
+    console.error('[workbook] fetch failed', err);
+    const usingDefault = base === DEFAULT_CLOUD_STATE_URL;
+    if (content) {
+      content.innerHTML =
+        `<div class="empty"><h2>Couldn't load workbook from Drive</h2>` +
+        `<p style="white-space:pre-wrap;text-align:left;max-width:720px;margin:0 auto;">${escapeHtml(err.message)}</p>` +
+        `<p>You can still load a local file instead:</p>` +
+        `<button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>` +
+        `<p class="hint" style="margin-top:12px;">` +
+        `<button class="upload-btn" onclick="fetchWorkbookFromDrive()" style="margin-right:8px;">Retry from Drive</button>` +
+        `Active Web App URL: <code style="word-break:break-all;">${escapeHtml(base)}</code>` +
+        (usingDefault ? '' : ' <em>(custom)</em>') + `</p></div>`;
+    }
+    return false;
+  }
+}
+
+// Lightweight peek at what the cloud currently has — fires masterInfo
+// (filename + mtime + size, no base64 payload) so the empty state can
+// preview the file the user would download if they click "Load from
+// Cloud". Runs on page open, then the user decides whether to pull the
+// full workbook. Doesn't touch state — that still happens via the
+// Sync State button or after a workbook loads.
+async function peekCloudWorkbook() {
+  const el = document.getElementById('cloudFilePreview');
+  if (!el) return;
+  const base = getCloudStateUrl();
+  const url = base + (base.includes('?') ? '&' : '?') + 'action=masterInfo';
+  try {
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const text = await resp.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || parsed.ok === false) {
+      throw new Error(parsed && parsed.error ? parsed.error : 'unexpected response');
+    }
+    if (parsed.empty) {
+      el.innerHTML = '<em>No .xlsx found in the configured Drive folder.</em>';
+      return;
+    }
+    const mtime = parsed.mtime ? new Date(parsed.mtime) : null;
+    const when = mtime && !isNaN(mtime) ? mtime.toISOString().slice(0, 10) : '';
+    const sizeKb = typeof parsed.size === 'number' ? ' · ' + Math.round(parsed.size / 1024).toLocaleString() + ' KB' : '';
+    el.innerHTML = 'Latest in cloud: <strong>' + escapeHtml(parsed.name || '(unnamed)') + '</strong>'
+      + (when ? ' · updated ' + escapeHtml(when) : '')
+      + sizeKb;
+  } catch (err) {
+    console.warn('[cloud peek] failed', err);
+    el.innerHTML = 'Cloud peek failed: ' + escapeHtml(err.message);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => { peekCloudWorkbook(); });
 
 document.getElementById('fileInput').addEventListener('change', handleFile);
 
