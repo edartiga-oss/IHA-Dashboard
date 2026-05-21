@@ -2440,7 +2440,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v17</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v18</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -6866,22 +6866,12 @@ const SITES_LIST_COLS = [
   { key: 'descopePika', label: 'PIKA Original Subcontract Amount', cls: 'num co-pika',
     get: s => {
       const v = computeDescopePerCompany(s).pika;
-      if (v <= 0) return '';
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return fmtMoney2dp(isBY ? -v : v);
+      return v > 0 ? fmtMoney2dp(v) : '';
     },
-    sortGet: s => {
-      const v = computeDescopePerCompany(s).pika;
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return isBY ? -v : v;
-    },
+    sortGet:     s => computeDescopePerCompany(s).pika,
     summable:    true,
     filterType:  'numRange',
-    filterValue: s => {
-      const v = computeDescopePerCompany(s).pika;
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return isBY ? -v : v;
-    },
+    filterValue: s => computeDescopePerCompany(s).pika,
   },
   { key: 'incurredPika', label: 'PIKA Retains or Additions', cls: 'num co-pika',
     get: s => {
@@ -6906,22 +6896,12 @@ const SITES_LIST_COLS = [
   { key: 'descopeTT',   label: 'TT Original Subcontract Amount',   cls: 'num co-tt',
     get: s => {
       const v = computeDescopePerCompany(s).tt;
-      if (v <= 0) return '';
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return fmtMoney2dp(isBY ? -v : v);
+      return v > 0 ? fmtMoney2dp(v) : '';
     },
-    sortGet: s => {
-      const v = computeDescopePerCompany(s).tt;
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return isBY ? -v : v;
-    },
+    sortGet:     s => computeDescopePerCompany(s).tt,
     summable:    true,
     filterType:  'numRange',
-    filterValue: s => {
-      const v = computeDescopePerCompany(s).tt;
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return isBY ? -v : v;
-    },
+    filterValue: s => computeDescopePerCompany(s).tt,
   },
   { key: 'incurredTT', label: 'TT Retains or Additions', cls: 'num co-tt',
     get: s => {
@@ -6946,22 +6926,12 @@ const SITES_LIST_COLS = [
   { key: 'descopeBattelle', label: 'Battelle Original Subcontract Amount', cls: 'num co-battelle',
     get: s => {
       const v = computeDescopePerCompany(s).battelle;
-      if (v <= 0) return '';
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return fmtMoney2dp(isBY ? -v : v);
+      return v > 0 ? fmtMoney2dp(v) : '';
     },
-    sortGet: s => {
-      const v = computeDescopePerCompany(s).battelle;
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return isBY ? -v : v;
-    },
+    sortGet:     s => computeDescopePerCompany(s).battelle,
     summable:    true,
     filterType:  'numRange',
-    filterValue: s => {
-      const v = computeDescopePerCompany(s).battelle;
-      const isBY = String(s.year || '').trim().toLowerCase() === 'base year';
-      return isBY ? -v : v;
-    },
+    filterValue: s => computeDescopePerCompany(s).battelle,
   },
   { key: 'incurredBattelle', label: 'Battelle Retains or Additions', cls: 'num co-battelle',
     get: s => {
