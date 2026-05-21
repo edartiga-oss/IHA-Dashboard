@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v9</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v10</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -10831,22 +10831,43 @@ function renderListSectionHtml(viewKey, opts = {}) {
   // updates the totals naturally.
   let totalsRowHtml = '';
   if (view.showTotalsRow) {
-    // BY→OY1 rollforward nets to zero across the TOTALS row:
-    // BY's Incurred displays decrease by R, OY1's Incurred
-    // displays increase by R — the cross-year sum is unchanged
-    // (raw site Incurred values are summed). Total Cost is NOT
-    // affected by the rollforward (OY1's contract scope is
-    // unchanged; only its books carry the rolled incurred).
-    // Credit Available = Total − Incurred → also unchanged.
-    // So the main TOTALS row needs no rollforward-specific
-    // adjustments; raw sums are correct.
+    // BY→OY1 rollforward nets to zero for most columns at the TOTALS
+    // row: BY's Incurred displays decrease by R, OY1's Incurred
+    // displays increase by R — the cross-year sum is unchanged (raw
+    // site Incurred values are summed). Total Cost is unaffected by
+    // the rollforward, and Credit Available = Total − Incurred is
+    // also unchanged.
+    //
+    // EXCEPTIONS, both keeping the TOTALS row in agreement with the
+    // summary box at the top of the view:
+    //   - Credit Used: per-row column uses raw incurred for green
+    //     rows, but the summary's Contract Credit Used subtracts the
+    //     BY rollforward. Apply the same subtraction here.
+    //   - Initial Credit Available: per-row sortGet returns null for
+    //     incurred-only clones (cost is null), so the per-row sum
+    //     skips their −incurred contribution. The summary uses
+    //     bucket-level math (b.total − b.incurred) which DOES net
+    //     them out. Subtract the clones' incurred at TOTALS to align.
+    const totalsByRollforward = viewKey === 'variations'
+      ? computeBaseYearRollforward(filteredSites)
+      : 0;
     let labelPlaced = false;
     const totalsCells = visibleCols.map(c => {
       if (c.summable) {
-        const sum = filteredSites.reduce((acc, s) => {
+        let sum = filteredSites.reduce((acc, s) => {
           const v = (c.sortGet || c.get)(s);
           return acc + (Number.isFinite(Number(v)) ? Number(v) : 0);
         }, 0);
+        if (totalsByRollforward > 0 && c.key === 'creditUsed') {
+          sum -= totalsByRollforward;
+        }
+        if (viewKey === 'variations' && c.key === 'contractValueAfterIncurred') {
+          let cloneIncurred = 0;
+          for (const s of filteredSites) {
+            if (s.cost == null) cloneIncurred += Number(s.incurredCost) || 0;
+          }
+          sum -= cloneIncurred;
+        }
         return `<td class="${c.cls}">${escapeHtml(fmtMoney2dp(sum))}</td>`;
       }
       if (!labelPlaced) {
