@@ -2403,6 +2403,33 @@
      removed on afterprint), but defensively hide it via CSS too. */
   .sl-cprint-container { display: none; }
   .inv-cprint-container { display: none; }
+
+  /* Excel-style cell selection (click-drag to select; tooltip shows sum). */
+  td.cell-selected {
+    background: rgba(59,130,246,0.22) !important;
+    box-shadow: inset 0 0 0 1px rgba(37,99,235,0.65);
+  }
+  .cell-sum-tooltip {
+    position: fixed;
+    display: none;
+    background: #111827;
+    color: #f9fafb;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    z-index: 99999;
+    pointer-events: none;
+    min-width: 150px;
+    line-height: 1.55;
+    white-space: nowrap;
+  }
+  .cell-sum-tooltip .row { display: flex; justify-content: space-between; gap: 12px; }
+  .cell-sum-tooltip .lbl { color: #9ca3af; }
+  .cell-sum-tooltip .val { color: #f9fafb; font-variant-numeric: tabular-nums; }
+  .cell-sum-tooltip .val.neg { color: #fca5a5; }
+  body.cell-selecting { user-select: none; }
 </style>
 </head>
 <body>
@@ -2413,7 +2440,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v16</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v17</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -13023,6 +13050,176 @@ function escapeAttr(s) {
   return escapeHtml(s).replace(/'/g, '&#039;');
 }
 
+// ------------------------------------------------------------------
+// Excel-style cell selection: click-drag a rectangle of <td> cells
+// and a tooltip near the cursor shows Count / Sum / Avg of the
+// numeric cells in the selection. Non-numeric cells are skipped.
+// Shift-click extends from the anchor. Esc or click-outside clears.
+// Inputs/buttons inside cells are untouched so editing still works.
+// ------------------------------------------------------------------
+(function initCellSumSelection() {
+  let selecting = false;
+  let anchor = null;          // { table, row, col }
+  let selected = new Set();   // Set<HTMLTableCellElement>
+  let tooltip = null;
+  let lastTd = null;
+
+  function cellPos(td) {
+    const tr = td.parentElement;
+    if (!tr || tr.tagName !== 'TR') return null;
+    const table = tr.closest('table');
+    if (!table) return null;
+    return { table, row: tr.rowIndex, col: td.cellIndex };
+  }
+
+  function clearSel() {
+    selected.forEach(c => c.classList.remove('cell-selected'));
+    selected.clear();
+    hideTip();
+  }
+
+  function applyRect(a, b) {
+    if (!a || !b || a.table !== b.table) return;
+    const r0 = Math.min(a.row, b.row), r1 = Math.max(a.row, b.row);
+    const c0 = Math.min(a.col, b.col), c1 = Math.max(a.col, b.col);
+    selected.forEach(c => c.classList.remove('cell-selected'));
+    selected.clear();
+    const rows = a.table.rows;
+    for (let r = r0; r <= r1; r++) {
+      const tr = rows[r]; if (!tr) continue;
+      for (let c = c0; c <= c1; c++) {
+        const cell = tr.cells[c];
+        if (!cell || cell.tagName !== 'TD') continue;
+        cell.classList.add('cell-selected');
+        selected.add(cell);
+      }
+    }
+  }
+
+  // Parse the visible text of a cell as a number. Handles money formats:
+  // "$1,234.56", "$ (1,234.56)" (parens = negative), plain "1234", "12%".
+  function parseCellNumber(td) {
+    let txt = (td.textContent || '').trim();
+    if (!txt) return NaN;
+    let neg = false;
+    if (/\(.+\)/.test(txt)) { neg = true; txt = txt.replace(/[()]/g, ''); }
+    txt = txt.replace(/[\$,%\s]/g, '');
+    if (txt.startsWith('-')) { neg = !neg; txt = txt.slice(1); }
+    if (!txt || !/^\d/.test(txt)) return NaN;
+    const n = parseFloat(txt);
+    if (!isFinite(n)) return NaN;
+    return neg ? -n : n;
+  }
+
+  function fmt2(n) {
+    const abs = Math.abs(n).toLocaleString('en-US', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+    return n < 0 ? `$ (${abs})` : `$${abs}`;
+  }
+
+  function ensureTip() {
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.className = 'cell-sum-tooltip';
+    document.body.appendChild(tooltip);
+    return tooltip;
+  }
+
+  function showTip(nearTd) {
+    let count = 0, numCount = 0, sum = 0;
+    selected.forEach(cell => {
+      count++;
+      const n = parseCellNumber(cell);
+      if (isFinite(n)) { numCount++; sum += n; }
+    });
+    if (count === 0) { hideTip(); return; }
+    const tip = ensureTip();
+    const avg = numCount > 0 ? sum / numCount : 0;
+    const sumCls = sum < 0 ? 'val neg' : 'val';
+    const avgCls = avg < 0 ? 'val neg' : 'val';
+    tip.innerHTML =
+      `<div class="row"><span class="lbl">Count</span><span class="val">${numCount}${count !== numCount ? ` / ${count}` : ''}</span></div>` +
+      (numCount > 0
+        ? `<div class="row"><span class="lbl">Sum</span><span class="${sumCls}">${fmt2(sum)}</span></div>` +
+          `<div class="row"><span class="lbl">Avg</span><span class="${avgCls}">${fmt2(avg)}</span></div>`
+        : '');
+    tip.style.display = 'block';
+
+    const rect = (nearTd || Array.from(selected)[selected.size - 1]).getBoundingClientRect();
+    const tw = tip.offsetWidth || 160;
+    const th = tip.offsetHeight || 70;
+    let left = rect.right + 10;
+    let top  = rect.top;
+    if (left + tw > window.innerWidth - 8) left = rect.left - tw - 10;
+    if (left < 8) left = 8;
+    if (top + th > window.innerHeight - 8) top = window.innerHeight - th - 8;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px';
+    tip.style.top  = top  + 'px';
+  }
+
+  function hideTip() {
+    if (tooltip) tooltip.style.display = 'none';
+  }
+
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    // Don't hijack interactive controls inside cells.
+    if (e.target.closest('input, button, select, textarea, a, label')) return;
+    const td = e.target.closest('td');
+    if (!td) {
+      if (!e.target.closest('.cell-sum-tooltip')) clearSel();
+      return;
+    }
+    const pos = cellPos(td);
+    if (!pos) return;
+    e.preventDefault();
+    document.body.classList.add('cell-selecting');
+    if (e.shiftKey && anchor && anchor.table === pos.table) {
+      applyRect(anchor, pos);
+    } else {
+      anchor = pos;
+      selected.forEach(c => c.classList.remove('cell-selected'));
+      selected.clear();
+      td.classList.add('cell-selected');
+      selected.add(td);
+    }
+    selecting = true;
+    lastTd = td;
+    showTip(td);
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!selecting || !anchor) return;
+    const td = e.target.closest('td');
+    if (!td) return;
+    const pos = cellPos(td);
+    if (!pos || pos.table !== anchor.table) return;
+    if (lastTd === td) { return; }
+    applyRect(anchor, pos);
+    lastTd = td;
+    showTip(td);
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!selecting) return;
+    selecting = false;
+    document.body.classList.remove('cell-selecting');
+    if (selected.size > 0) showTip(lastTd);
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && selected.size > 0) {
+      clearSel();
+      anchor = null;
+    }
+  });
+
+  // Reposition tooltip on scroll/resize so it stays anchored to the cell.
+  window.addEventListener('scroll', () => { if (selected.size > 0 && lastTd) showTip(lastTd); }, true);
+  window.addEventListener('resize', () => { if (selected.size > 0 && lastTd) showTip(lastTd); });
+})();
 
 </script>
 
