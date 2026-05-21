@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v8</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v9</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -11110,6 +11110,26 @@ function renderListSectionHtml(viewKey, opts = {}) {
               // by R (so $0 once rolled). Credit Available reads
               // as −R to surface the rollforward "owed" from BY
               // to OY1.
+              sum -= byRollforward;
+            } else if (isOY1Group && c.key === 'contractValueAfterIncurred') {
+              // Initial Credit Available mirrors Credit Available
+              // at OY1: the rollforward inflates OY1's effective
+              // Incurred, so the contract-value-minus-incurred read
+              // shown by Initial Credit Available should also drop
+              // by R.
+              sum -= byRollforward;
+            } else if (isBaseYearGroup && c.key === 'contractValueAfterIncurred') {
+              // BY mirror: same −R surfacing the rollforward owed
+              // forward to OY1. With BY exclusion the sum starts
+              // at $0, so this lands at −R.
+              sum -= byRollforward;
+            } else if (isOY1Group && c.key === 'creditUsed') {
+              // OY1's per-row Credit Used uses raw incurred, but
+              // the displayed Incurred at this subtotal is raw +
+              // rollforward. Subtract the rollforward at the
+              // subtotal level too so Credit Used agrees with the
+              // rollforward-adjusted picture, matching what the
+              // summary box does at the RD level.
               sum -= byRollforward;
             }
           }
