@@ -2848,6 +2848,69 @@ async function syncCloudState() {
   }
 }
 
+// Fetches the latest Master Schedule .xlsx from the Apps Script Web App
+// (which scans a fixed Drive folder and serves the most recently modified
+// file as base64 JSON). On success, feeds the decoded buffer into the
+// same processWorkbookBuffer() that the file picker uses, so rendering is
+// identical to a local load.
+async function fetchWorkbookFromDrive() {
+  const base = getCloudStateUrl();
+  const url = base + (base.includes('?') ? '&' : '?') + 'type=workbook';
+  const content = document.getElementById('content');
+  if (content) {
+    content.innerHTML =
+      '<div class="empty"><h2>Loading latest workbook from Drive…</h2>' +
+      '<p class="hint">Fetching the most recently modified .xlsx from the team folder.</p></div>';
+  }
+  try {
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const text = await resp.text();
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (_) {
+      throw new Error('Workbook response is not JSON.\n\nFirst bytes:\n' + (text.length > 240 ? text.slice(0, 240) + '…' : text));
+    }
+    if (!parsed || parsed.ok === false || !parsed.base64) {
+      throw new Error('Web App returned an unexpected shape for workbook:\n\n' + JSON.stringify(parsed).slice(0, 240));
+    }
+    // Decode base64 → Uint8Array. atob yields a binary string of char codes
+    // 0-255; we copy those into a typed array byte-by-byte so XLSX.read
+    // sees the same bytes a local FileReader would.
+    const bin = atob(parsed.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const displayName = parsed.filename || 'Master IHA workbook (from Drive)';
+    processWorkbookBuffer(bytes.buffer, displayName);
+    return true;
+  } catch (err) {
+    console.error('[workbook] fetch failed', err);
+    const usingDefault = base === DEFAULT_CLOUD_STATE_URL;
+    if (content) {
+      content.innerHTML =
+        `<div class="empty"><h2>Couldn't load workbook from Drive</h2>` +
+        `<p style="white-space:pre-wrap;text-align:left;max-width:720px;margin:0 auto;">${escapeHtml(err.message)}</p>` +
+        `<p>You can still load a local file instead:</p>` +
+        `<button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>` +
+        `<p class="hint" style="margin-top:12px;">` +
+        `<button class="upload-btn" onclick="fetchWorkbookFromDrive()" style="margin-right:8px;">Retry from Drive</button>` +
+        `Active Web App URL: <code style="word-break:break-all;">${escapeHtml(base)}</code>` +
+        (usingDefault ? '' : ' <em>(custom)</em>') + `</p></div>`;
+    }
+    return false;
+  }
+}
+
+// Auto-load on page open: pull the latest workbook from Drive, then layer
+// the state JSON on top. Both flow through the same Apps Script Web App
+// (the workbook endpoint just adds ?type=workbook). The file picker stays
+// available as a fallback if the Drive fetch fails or the user wants to
+// inspect a local copy.
+window.addEventListener('DOMContentLoaded', async () => {
+  const ok = await fetchWorkbookFromDrive();
+  if (ok) syncCloudState();
+});
+
 document.getElementById('fileInput').addEventListener('change', handleFile);
 
 function handleFile(e) {
