@@ -76,6 +76,16 @@
     text-transform: uppercase;
     letter-spacing: 2px;
   }
+  .app-version {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent-soft);
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border: 1px solid var(--accent-soft);
+    border-radius: 999px;
+    opacity: 0.75;
+  }
   .file-zone { display: flex; align-items: center; gap: 12px; }
   .file-info {
     font-family: 'IBM Plex Mono', monospace;
@@ -2403,6 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
+    <span class="app-version" id="appVersion" title="Dashboard version">v1</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -2410,6 +2421,9 @@
     <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls">
     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
       Load Workbook
+    </button>
+    <button class="upload-btn" onclick="loadFromCloud()" title="Download the latest Master Schedule directly from Google Drive">
+      Load from Cloud
     </button>
   </div>
 </header>
@@ -2419,7 +2433,8 @@
     <h2>No workbook loaded</h2>
     <p>Drop in your latest <strong>Master IHA Projected Schedule</strong> spreadsheet. The viewer reads only the <strong>AllSites</strong> tab and generates the dashboard, sites list, and variation views from it.</p>
     <button class="big-btn" onclick="document.getElementById('fileInput').click()">Choose .xlsx file</button>
-    <div class="hint">All processing happens locally in your browser — nothing is uploaded.</div>
+    <button class="big-btn" onclick="loadFromCloud()" style="margin-left:0.5rem;">Load from Cloud</button>
+    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest Master Schedule from Google Drive.</div>
   </div>
 </div>
 
@@ -2710,6 +2725,14 @@ function displayName(s) {
 // ====================================================================
 // FILE LOADING
 // ====================================================================
+// Google Apps Script Web App that serves the live Master Schedule.
+// The script reads the workbook from Drive under its own auth, so the
+// underlying file does not need to be publicly shared. The response
+// may be raw .xlsx bytes or a base64-encoded payload (optionally
+// wrapped in JSON) — extractWorkbookBytes() handles both shapes.
+const CLOUD_WORKBOOK_URL = 'https://script.google.com/macros/s/AKfycbw4KaPT09sZltWpuOrqLvN0weOeT0VfBx-nDR_hQAZCNIRa8YI-wTR-frNGh67wA7Y/exec';
+const CLOUD_WORKBOOK_NAME = 'Master Schedule (Google Drive)';
+
 document.getElementById('fileInput').addEventListener('change', handleFile);
 
 function handleFile(e) {
@@ -2719,9 +2742,59 @@ function handleFile(e) {
     '<div class="empty"><h2>Reading workbook...</h2></div>';
 
   const reader = new FileReader();
-  reader.onload = (evt) => {
+  reader.onload = (evt) => processWorkbookBuffer(evt.target.result, file.name);
+  reader.readAsArrayBuffer(file);
+}
+
+// Apps Script web apps can't stream raw binary cleanly via
+// ContentService, so the response may arrive as base64 (sometimes
+// wrapped in JSON like {data: "<b64>"}). Sniff for the XLSX zip magic
+// first; if absent, fall back to base64 decode (with JSON unwrap).
+function extractWorkbookBytes(arrayBuffer) {
+  const u8 = new Uint8Array(arrayBuffer);
+  const isZip = u8.length >= 4 && u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04;
+  if (isZip) return arrayBuffer;
+  const text = new TextDecoder('utf-8').decode(arrayBuffer).trim();
+  let b64 = text;
+  if (text.startsWith('{') || text.startsWith('[')) {
     try {
-      const data = new Uint8Array(evt.target.result);
+      const parsed = JSON.parse(text);
+      b64 = parsed.data || parsed.base64 || parsed.bytes || parsed.content || parsed.file || '';
+    } catch (_) { /* fall through to raw-base64 attempt */ }
+  }
+  b64 = String(b64).replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+  if (!b64) throw new Error('Web App response was neither an .xlsx nor a recognized base64 payload.');
+  const binStr = atob(b64);
+  const out = new Uint8Array(binStr.length);
+  for (let i = 0; i < binStr.length; i++) out[i] = binStr.charCodeAt(i);
+  return out.buffer;
+}
+
+async function loadFromCloud() {
+  document.getElementById('content').innerHTML =
+    '<div class="empty"><h2>Downloading latest workbook from Google Drive...</h2></div>';
+  try {
+    const resp = await fetch(CLOUD_WORKBOOK_URL, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const buf = await resp.arrayBuffer();
+    if (buf.byteLength < 256) {
+      throw new Error('Response too small to be a workbook — check that the Web App is deployed with access "Anyone".');
+    }
+    const wbBytes = extractWorkbookBytes(buf);
+    processWorkbookBuffer(wbBytes, CLOUD_WORKBOOK_NAME);
+  } catch (err) {
+    document.getElementById('content').innerHTML =
+      `<div class="empty"><h2>Cloud load failed</h2>` +
+      `<p>${escapeHtml(err.message)}</p>` +
+      `<p class="hint">The Apps Script Web App must be deployed with <strong>Execute as: Me</strong> and <strong>Who has access: Anyone</strong>. ` +
+      `If the network blocks <code>script.google.com</code>, use <em>Load Workbook</em> with a local copy instead.</p></div>`;
+    console.error(err);
+  }
+}
+
+function processWorkbookBuffer(arrayBuffer, displayName) {
+    try {
+      const data = new Uint8Array(arrayBuffer);
       const wb = XLSX.read(data, { type: 'array', cellDates: false });
       if (!wb.SheetNames.includes(SHEET_NAME)) {
         document.getElementById('content').innerHTML =
@@ -2769,7 +2842,7 @@ function handleFile(e) {
       if (reportStatusData) loadedSources.push('Report Status');
 
       document.getElementById('fileInfo').innerHTML =
-        `<div class="fname">${escapeHtml(file.name)}</div><div>${allSites.length} sites loaded</div>`;
+        `<div class="fname">${escapeHtml(displayName)}</div><div>${allSites.length} sites loaded</div>`;
       document.getElementById('settingsBtn').style.display = 'inline-block';
       // Update the header tagline to reflect what was actually loaded
       const taglineEl = document.getElementById('headerTag');
@@ -2782,8 +2855,6 @@ function handleFile(e) {
         `<div class="empty"><h2>Failed to read file</h2><p>${escapeHtml(err.message)}</p></div>`;
       console.error(err);
     }
-  };
-  reader.readAsArrayBuffer(file);
 }
 
 function parseAllSites(ws) {
