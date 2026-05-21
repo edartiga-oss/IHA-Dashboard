@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v6</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v7</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -11450,10 +11450,13 @@ function renderListSectionHtml(viewKey, opts = {}) {
   //     NOT included — they're a data integrity signal, not a descope.
   //   - Credit Used:          sum of (Total Cost − Incurred Cost)
   //     across rows tinted green by the highlight window (PSC or
-  //     Final Report approved in window). Net-of-incurred so Remaining
-  //     Credit doesn't double-count the incurred portion (which is
-  //     already subtracted to form Initial Credit Available). Zero
-  //     when no highlight window is set.
+  //     Final Report approved in window), MINUS the per-RD BY→OY1
+  //     rollforward. The rollforward subtraction corrects for the
+  //     fact that OY1's displayed Incurred is inflated by the
+  //     rollforward but green OY1 rows' contribution to Credit Used
+  //     uses raw per-row incurred — without the subtraction, the
+  //     summary would over-recognize credit by exactly the
+  //     rollforward amount. Zero when no highlight window is set.
   // Available Credit = Total Contract Value − Contract Descope.
   // Numbers respect active filters (uses filteredSites), matching the
   // table's totals and per-RD subtotals semantics.
@@ -11465,7 +11468,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
     const ensureBucket = (rd) => {
       if (!buckets[rd]) {
         buckets[rd] = {
-          total: 0, descope: 0, used: 0, incurred: 0,
+          total: 0, descope: 0, used: 0, incurred: 0, rollforward: 0,
           count: 0, descopeCount: 0, usedCount: 0,
           newTotal: 0, newIncurred: 0,
           newCompleted: 0, newProjected: 0,
@@ -11498,6 +11501,20 @@ function renderListSectionHtml(viewKey, opts = {}) {
         // it again here would double-deduct it from Remaining Credit.
         b.used += cost - incurred;
         b.usedCount++;
+      }
+      // Per-RD BY→OY1 rollforward: Base Year sites that are completely
+      // descoped (or are incurred-only clones) contribute their
+      // incurred to a rollforward pool that's added to OY1's subtotal
+      // display. The displayed OY1 Incurred is therefore raw +
+      // rollforward, while green OY1 rows' Credit Used contribution
+      // still uses raw per-row incurred — over-recognizing credit
+      // by exactly the rollforward amount. Subtracted from b.used
+      // below so the summary reflects the rollforward-adjusted
+      // incurred picture, matching what the user sees in the
+      // BY/OY1 row annotations.
+      const yr = String(s.year || '').trim().toLowerCase();
+      if (yr === 'base year' && (siteIsCompletelyDescoped(s) || s._scopeChangesIncurredOnly === true)) {
+        b.rollforward += incurred;
       }
     }
 
@@ -11546,7 +11563,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
       ...Object.keys(buckets).filter(rd => !RD_ORDER_LOCAL.includes(rd)),
     ];
     const grand = {
-      total: 0, descope: 0, used: 0, incurred: 0,
+      total: 0, descope: 0, used: 0, incurred: 0, rollforward: 0,
       count: 0, descopeCount: 0, usedCount: 0,
       newTotal: 0, newIncurred: 0,
       newCompleted: 0, newProjected: 0,
@@ -11558,6 +11575,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
       grand.descope += b.descope;
       grand.used += b.used;
       grand.incurred += b.incurred;
+      grand.rollforward += b.rollforward;
       grand.count += b.count;
       grand.descopeCount += b.descopeCount;
       grand.usedCount += b.usedCount;
@@ -11583,14 +11601,16 @@ function renderListSectionHtml(viewKey, opts = {}) {
         // incurred cost. Incurred is already-spent money on visits
         // that's no longer "available" for new credit consumption.
         const available = b.total - b.descope - b.incurred;
-        // Contract Credit Used is the net green-row sum: each green
-        // row contributes (Total Cost − Incurred Cost). Net-of-incurred
-        // so Remaining = Available − Used doesn't double-deduct the
-        // green rows' incurred (already subtracted once via Initial
-        // Credit Available). A fully-completed green row at $100 / $20
-        // incurred contributes $80 here and consumes $80 of available
-        // credit, leaving $0 remaining on that row.
-        const contractCreditUsed = b.used;
+        // Contract Credit Used: net green-row sum (Total Cost −
+        // Incurred Cost per row) minus the BY→OY1 rollforward for
+        // this RD. The rollforward subtraction corrects an over-
+        // recognition that arises because the rollforward inflates
+        // OY1's displayed Incurred but green OY1 rows' per-row math
+        // still uses raw (pre-rollforward) incurred. Without the
+        // subtraction, the row-level Credit Used column would
+        // disagree with the rollforward-adjusted picture shown by
+        // the OY1 Incurred Cost subtotal.
+        const contractCreditUsed = b.used - b.rollforward;
         const remaining = available - contractCreditUsed;
         const descopeCell = b.descope > 0
           ? `<span class="mono" style="color:#c62828; font-weight:600;">${escapeHtml(fmtMoney2dp(b.descope))}</span>`
@@ -11627,6 +11647,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06);">
               ${contractUsedCell}
               ${b.usedCount > 0 ? `<div style="color:var(--ink-mute); font-size:10px; font-weight:500;">${b.usedCount} in window</div>` : ''}
+              ${b.rollforward > 0 ? `<div style="color:#c62828; font-size:10px; font-weight:500;" title="BY→OY1 rollforward subtracted from Credit Used to match the rollforward-adjusted Incurred shown on the OY1 subtotal">−${escapeHtml(fmtMoney2dp(b.rollforward))} BY rollforward</div>` : ''}
             </td>
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06);">${remainingCell}</td>
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
@@ -11680,7 +11701,9 @@ function renderListSectionHtml(viewKey, opts = {}) {
         `;
       }).join('');
       const grandAvailable = grand.total - grand.descope - grand.incurred;
-      const grandContractUsed = grand.used;
+      // Grand Contract Credit Used mirrors the per-RD calc: net green-
+      // row sum minus the BY→OY1 rollforward across all RDs.
+      const grandContractUsed = grand.used - grand.rollforward;
       const grandRemaining = grandAvailable - grandContractUsed;
       const grandRemainingCell = grandRemaining < 0
         ? `<span class="mono" style="color:#c62828;" title="Contract Credit Used exceeds Available Credit — likely a data anomaly">${escapeHtml(fmtMoney2dp(grandRemaining))}</span>`
@@ -11696,7 +11719,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grand.total - grand.incurred))}</span></td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700; ${grand.descope > 0 ? 'color:#c62828;' : ''}"><span class="mono">${escapeHtml(fmtMoney2dp(grand.descope))}</span>${grand.descopeCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.descopeCount} descoped</div>` : ''}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grandAvailable))}</span></td>
-          <td style="padding: 8px 10px; text-align:right; font-weight:700;">${grandContractUsedCell}${grand.usedCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.usedCount} in window</div>` : ''}</td>
+          <td style="padding: 8px 10px; text-align:right; font-weight:700;">${grandContractUsedCell}${grand.usedCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.usedCount} in window</div>` : ''}${grand.rollforward > 0 ? `<div style="color:#c62828; font-weight:500; font-size:10px;">−${escapeHtml(fmtMoney2dp(grand.rollforward))} BY rollforward</div>` : ''}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;">${grandRemainingCell}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);"><span class="mono">${escapeHtml(fmtMoney2dp(grand.newTotal))}</span></td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grand.newIncurred))}</span></td>
@@ -11753,7 +11776,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Contract Credit Used
-                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Green rows: Total Cost − Incurred Cost (approved in window)</div>
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Green rows: Total Cost − Incurred Cost − BY→OY1 rollforward</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Remaining Credit
