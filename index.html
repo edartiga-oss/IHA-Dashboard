@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v10</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v11</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -10848,8 +10848,19 @@ function renderListSectionHtml(viewKey, opts = {}) {
     //     skips their −incurred contribution. The summary uses
     //     bucket-level math (b.total − b.incurred) which DOES net
     //     them out. Subtract the clones' incurred at TOTALS to align.
+    //   - Credit Available: per-row column is cost − incurred, which
+    //     doesn't subtract descoped sites' contract value. The
+    //     summary's Total Available Credit is Total − Descope −
+    //     Incurred, so the descope amount has to come out at the
+    //     TOTALS level too.
     const totalsByRollforward = viewKey === 'variations'
       ? computeBaseYearRollforward(filteredSites)
+      : 0;
+    const totalsDescope = viewKey === 'variations'
+      ? filteredSites.reduce(
+          (acc, s) => acc + (siteIsCompletelyDescoped(s) ? (Number(s.cost) || 0) : 0),
+          0
+        )
       : 0;
     let labelPlaced = false;
     const totalsCells = visibleCols.map(c => {
@@ -10867,6 +10878,9 @@ function renderListSectionHtml(viewKey, opts = {}) {
             if (s.cost == null) cloneIncurred += Number(s.incurredCost) || 0;
           }
           sum -= cloneIncurred;
+        }
+        if (totalsDescope > 0 && c.key === 'creditAvailable') {
+          sum -= totalsDescope;
         }
         return `<td class="${c.cls}">${escapeHtml(fmtMoney2dp(sum))}</td>`;
       }
