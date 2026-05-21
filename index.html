@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v3</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v4</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -6662,13 +6662,13 @@ const SITES_LIST_COLS = [
     get: s => s.incurredCost == null ? '' : fmtMoney2dp(s.incurredCost),
     sortGet: s => s.incurredCost, summable: true,
     filterType: 'numRange', filterValue: s => s.incurredCost },
-  // Total Contract Value after subtracting Incurred Cost. Same
-  // arithmetic as Credit Available (cost − incurred) but exists
-  // as its own column so the Scope Changes view can show the
-  // running contract value immediately after Incurred Cost,
-  // labeled in contract terms rather than "credit" terms. Blank
-  // when Total Cost is null (e.g. incurred-only clone rows).
-  { key: 'contractValueAfterIncurred', label: 'Total Contract Value (Incurred cost subtracted)', cls: 'num',
+  // Total Contract Value after subtracting Incurred Cost — the initial
+  // pool of credit available before any descope deductions are applied.
+  // Same arithmetic as Credit Available (cost − incurred); exists as
+  // its own column so Scope Changes can show the running contract
+  // value immediately after Incurred Cost. Blank when Total Cost is
+  // null (e.g. incurred-only clone rows).
+  { key: 'contractValueAfterIncurred', label: 'Initial Credit Available', cls: 'num',
     get: s => {
       if (s.cost == null) return '';
       const c = Number(s.cost) || 0;
@@ -8589,15 +8589,14 @@ function applyVariationsNewOverrides(cols, viewKey) {
 }
 
 // Scope Changes (variations) view label overrides. The "Total
-// Cost" column is relabeled to make explicit that it's the
-// contract value BEFORE incurred cost is applied — distinguishing
-// it from the adjacent "Total Contract Value (Incurred cost
-// subtracted)" column. View-specific so the Sites List keeps the
-// concise "Total Cost" label.
+// Cost" column is relabeled as the contract value of the visible
+// row — pairs with the adjacent "Initial Credit Available" column
+// (Total Cost − Incurred Cost). View-specific so the Sites List
+// keeps the concise "Total Cost" label.
 function applyVariationsScopeOverrides(cols, viewKey) {
   if (viewKey !== 'variations') return cols;
   const overrides = {
-    cost: { label: 'Total Contract Value (before applying Incurred Cost)' },
+    cost: { label: 'Total Contract Value' },
   };
   return cols.map(c => overrides[c.key] ? { ...c, ...overrides[c.key] } : c);
 }
@@ -11694,7 +11693,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
               <tr style="background: rgba(0,0,0,0.03);">
                 <th style="padding: 6px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">RD / MSC</th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
-                  Total Contract Value (before applying Incurred Cost)
+                  Total Contract Value
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Sum of Total Cost on visible rows</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
@@ -11702,7 +11701,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Sum of Incurred Cost on visible rows</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
-                  Total Contract Value (Incurred cost subtracted)
+                  Initial Credit Available
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Contract Value − Incurred Cost</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
@@ -11711,7 +11710,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Total Available Credit
-                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total − Contract Descope − Incurred Cost</div>
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Initial Credit Available − Contract Descope</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Contract Credit Used
