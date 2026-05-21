@@ -2413,7 +2413,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v14</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v15</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -11761,21 +11761,6 @@ function renderListSectionHtml(viewKey, opts = {}) {
             </td>
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
               ${(() => {
-                // Total Credit needed to reallocate = Total Available
-                // Credit − Total New Sites Cost. Positive = surplus
-                // (Available credit exceeds what NEW Sites need, so
-                // there's slack to reallocate elsewhere). Negative =
-                // deficit (NEW Sites cost more than what's available,
-                // so additional credit needs to be brought in).
-                const reallocate = available - b.newTotal;
-                if (reallocate < 0) {
-                  return `<span class="mono" style="color:#c62828; font-weight:600;" title="NEW Sites cost exceeds Total Available Credit — additional credit needs to be reallocated INTO this contract">${escapeHtml(fmtMoney2dp(reallocate))}</span>`;
-                }
-                return `<span class="mono" style="font-weight:600;">${escapeHtml(fmtMoney2dp(reallocate))}</span>`;
-              })()}
-            </td>
-            <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
-              ${(() => {
                 // Total Remaining Credit = Total Available Credit −
                 // New Sites Completed. The credit pool left after
                 // recognizing the work formally completed on NEW
@@ -11787,6 +11772,21 @@ function renderListSectionHtml(viewKey, opts = {}) {
                   return `<span class="mono" style="color:#c62828; font-weight:700;" title="NEW Sites Completed exceeds Total Available Credit — likely a data anomaly worth investigating">${escapeHtml(fmtMoney2dp(totalRem))}</span>`;
                 }
                 return `<span class="mono" style="font-weight:700;">${escapeHtml(fmtMoney2dp(totalRem))}</span>`;
+              })()}
+            </td>
+            <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
+              ${(() => {
+                // Total Credit needed to reallocate = Total Available
+                // Credit − Total New Sites Cost. Positive = surplus
+                // (Available credit exceeds what NEW Sites need, so
+                // there's slack to reallocate elsewhere). Negative =
+                // deficit (NEW Sites cost more than what's available,
+                // so additional credit needs to be brought in).
+                const reallocate = available - b.newTotal;
+                if (reallocate < 0) {
+                  return `<span class="mono" style="color:#c62828; font-weight:600;" title="NEW Sites cost exceeds Total Available Credit — additional credit needs to be reallocated INTO this contract">${escapeHtml(fmtMoney2dp(reallocate))}</span>`;
+                }
+                return `<span class="mono" style="font-weight:600;">${escapeHtml(fmtMoney2dp(reallocate))}</span>`;
               })()}
             </td>
           </tr>
@@ -11824,15 +11824,6 @@ function renderListSectionHtml(viewKey, opts = {}) {
           })()}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grand.newProjected))}</span>${grand.newProjectedCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.newProjectedCount} new site${grand.newProjectedCount === 1 ? '' : 's'}</div>` : ''}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);">${(() => {
-            // Grand Total Credit needed to reallocate = grand Total
-            // Available Credit − grand Total New Sites Cost.
-            const gReallocate = grandAvailable - grand.newTotal;
-            if (gReallocate < 0) {
-              return `<span class="mono" style="color:#c62828;" title="NEW Sites cost exceeds Total Available Credit across all RDs">${escapeHtml(fmtMoney2dp(gReallocate))}</span>`;
-            }
-            return `<span class="mono">${escapeHtml(fmtMoney2dp(gReallocate))}</span>`;
-          })()}</td>
-          <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);">${(() => {
             // Grand Total Remaining Credit = grand Total Available
             // Credit − grand New Sites Completed.
             const gtotalRem = grandAvailable - grand.newCompleted;
@@ -11840,6 +11831,15 @@ function renderListSectionHtml(viewKey, opts = {}) {
               return `<span class="mono" style="color:#c62828;" title="NEW Sites Completed exceeds Total Available Credit across all RDs">${escapeHtml(fmtMoney2dp(gtotalRem))}</span>`;
             }
             return `<span class="mono">${escapeHtml(fmtMoney2dp(gtotalRem))}</span>`;
+          })()}</td>
+          <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);">${(() => {
+            // Grand Total Credit needed to reallocate = grand Total
+            // Available Credit − grand Total New Sites Cost.
+            const gReallocate = grandAvailable - grand.newTotal;
+            if (gReallocate < 0) {
+              return `<span class="mono" style="color:#c62828;" title="NEW Sites cost exceeds Total Available Credit across all RDs">${escapeHtml(fmtMoney2dp(gReallocate))}</span>`;
+            }
+            return `<span class="mono">${escapeHtml(fmtMoney2dp(gReallocate))}</span>`;
           })()}</td>
         </tr>
       `;
@@ -11905,12 +11905,12 @@ function renderListSectionHtml(viewKey, opts = {}) {
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">NEW Sites not highlighted (no milestone in window)</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute); border-left: 2px solid rgba(0,0,0,0.12);">
-                  Total Credit needed to reallocate
-                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Available Credit − Total New Sites Cost</div>
-                </th>
-                <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute); border-left: 2px solid rgba(0,0,0,0.12);">
                   Total Remaining Credit
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Available Credit − New Sites Completed</div>
+                </th>
+                <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute); border-left: 2px solid rgba(0,0,0,0.12);">
+                  Total Credit needed to reallocate
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Available Credit − Total New Sites Cost</div>
                 </th>
               </tr>
             </thead>
