@@ -1620,17 +1620,6 @@
   @media (max-width: 720px) {
     .settings-fields { grid-template-columns: 1fr; }
   }
-  footer {
-    padding: 16px 28px;
-    border-top: 1px solid var(--line);
-    background: var(--bg-soft);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px;
-    color: var(--ink-mute);
-    letter-spacing: 1px;
-    text-align: center;
-  }
-
   @media (max-width: 720px) {
     header { padding: 14px 16px; }
     .brand h1 { font-size: 20px; }
@@ -2474,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v48</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v49</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -2508,10 +2497,6 @@
 <div class="modal-backdrop" id="modal" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modalContent"></div>
 </div>
-
-<footer>
-  Source of truth: AllSites tab &middot; Refresh by re-loading a new copy of the workbook
-</footer>
 
 <script>
 // ====================================================================
