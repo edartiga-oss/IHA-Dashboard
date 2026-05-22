@@ -1295,6 +1295,16 @@
     font-weight: 600;
     color: var(--ink);
   }
+  .sl-table tbody tr.sl-totals-row td .sl-totals-sub-note {
+    font-size: 10px;
+    font-weight: 500;
+    font-style: italic;
+    margin-top: 2px;
+    opacity: 0.78;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
   .sl-table tbody tr.sl-totals-row td.sl-totals-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
@@ -2440,7 +2450,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v21</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v22</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -10909,6 +10919,29 @@ function renderListSectionHtml(viewKey, opts = {}) {
         if (totalsDescope > 0 && c.key === 'creditAvailable') {
           sum -= totalsDescope;
         }
+        // Per-company Original Subcontract Amount columns on Scope
+        // Changes: the column sum includes BY descopes (real money
+        // already off the books) plus non-BY scope-change exposure.
+        // Show the non-BY exposure as the headline total and call out
+        // the BY portion on a sub-line so the figure matches what's
+        // still in play. data-cell-num isolates the headline number
+        // for the cell-sum tooltip.
+        if (viewKey === 'variations' &&
+            (c.key === 'descopePika' || c.key === 'descopeTT' || c.key === 'descopeBattelle')) {
+          const coKey = c.key === 'descopePika' ? 'pika'
+                      : c.key === 'descopeTT'   ? 'tt'   : 'battelle';
+          let byPart = 0;
+          for (const s of filteredSites) {
+            const y = siteYearForGrouping(s).toLowerCase();
+            if (y === 'base year') byPart += computeDescopePerCompany(s)[coKey] || 0;
+          }
+          const nonBy = sum - byPart;
+          const headline = fmtMoney2dp(nonBy);
+          const note = byPart > 0
+            ? `<div class="sl-totals-sub-note">BY Descope of ${escapeHtml(fmtMoney2dp(byPart))}</div>`
+            : '';
+          return `<td class="${c.cls}" data-cell-num="${escapeAttr(headline)}">${escapeHtml(headline)}${note}</td>`;
+        }
         return `<td class="${c.cls}">${escapeHtml(fmtMoney2dp(sum))}</td>`;
       }
       if (!labelPlaced) {
@@ -13076,8 +13109,12 @@ function escapeAttr(s) {
 
   // Parse the visible text of a cell as a number. Handles money formats:
   // "$1,234.56", "$ (1,234.56)" (parens = negative), plain "1234", "12%".
+  // Cells that render a sub-note alongside the main number set
+  // data-cell-num="<formatted main>" so we can isolate the numeric
+  // portion without picking up the note text.
   function parseCellNumber(td) {
-    let txt = (td.textContent || '').trim();
+    let txt = (td.dataset && td.dataset.cellNum) || (td.textContent || '');
+    txt = txt.trim();
     if (!txt) return NaN;
     let neg = false;
     if (/\(.+\)/.test(txt)) { neg = true; txt = txt.replace(/[()]/g, ''); }
