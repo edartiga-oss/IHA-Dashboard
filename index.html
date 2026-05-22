@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v52</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v53</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -12633,7 +12633,7 @@ function buildContractTotalsSourceHtml() {
             return `
               <tr style="border-top:1px solid rgba(0,0,0,0.08);">
                 <td rowspan="2" style="padding:3px 16px 3px 0; color:var(--ink); font-weight:700; vertical-align:top;">${escapeHtml(rd)}</td>
-                <td style="padding:3px 16px; color:var(--ink); font-size:11px;">On Contract${ocRow}</td>
+                <td style="padding:3px 16px; color:var(--ink); font-size:11px;">On-Contract${ocRow}</td>
                 ${fmtCell(wb.onContract, 'var(--ink)')}
                 ${fmtCell(ocBy.pika, PIKA_C)}
                 ${fmtCell(null, PIKA_ODC_C)}
@@ -12811,6 +12811,15 @@ function renderVariationsSummary() {
     return;
   }
 
+  // QA pill primitives. Hoisted out of the per-RD render loop so
+  // the grand totals block at the top of the view can run the
+  // same PIKA + TT + Battelle = Total balance check on its three
+  // summary rows.
+  const qaPass = '<span style="display:inline-block; min-width:22px; padding:1px 6px; border-radius:10px; background:#d4edda; color:#1e7e34; font-weight:700; font-size:12px;">✓</span>';
+  const qaFail = '<span style="display:inline-block; min-width:22px; padding:1px 6px; border-radius:10px; background:#f8d7da; color:#c62828; font-weight:700; font-size:12px;">✗</span>';
+  const qaNone = '<span style="color:var(--ink-mute);">—</span>';
+  const qaCheck = (rowTotal, p, t, b) => Math.abs((p + t + b) - rowTotal) <= 1 ? qaPass : qaFail;
+
   // Build per-RD sections. Grand-total accumulators now carry the
   // full per-company breakdown across three logical bands:
   //   * fullContract*  — On Contract row (workbook-sourced)
@@ -12954,15 +12963,9 @@ function renderVariationsSummary() {
     const computedValStyle = valStyle + ' color:#a00;';
     const inputStyle = "width:130px; padding:3px 6px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:13px; border:1px solid var(--line); background:#fff; color:#a00; font-weight:700;";
     const dashStyle = valStyle + ' color:var(--ink-mute);';
-    // QA pills — small rounded backgrounds for the check column
-    // so success/failure reads at a glance.
-    const qaPass = '<span style="display:inline-block; min-width:22px; padding:1px 6px; border-radius:10px; background:#d4edda; color:#1e7e34; font-weight:700; font-size:12px;">✓</span>';
-    const qaFail = '<span style="display:inline-block; min-width:22px; padding:1px 6px; border-radius:10px; background:#f8d7da; color:#c62828; font-weight:700; font-size:12px;">✗</span>';
-    const qaNone = '<span style="color:var(--ink-mute);">—</span>';
-    const qaCheck = (rowTotal, p, t, b) => {
-      const sum = p + t + b;
-      return Math.abs(sum - rowTotal) <= 1 ? qaPass : qaFail;
-    };
+    // qaPass / qaFail / qaNone / qaCheck are hoisted to the
+    // renderVariationsSummary scope above so the grand totals
+    // block (rendered outside the per-RD map) can reuse them.
     // Workbook-source pill. When the row's Total matches the
     // workbook value (within $1) we render nothing — the user
     // asked for highlighting only on MISMATCH so a clean dashboard
@@ -13136,7 +13139,7 @@ function renderVariationsSummary() {
       ? `<span style="color:var(--ink-mute); font-weight:500; font-size:11px; margin-left:8px;">${(val / onContract * 100).toFixed(1)}%</span>`
       : '';
     const rowOnContract = `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${escapeHtml(rd)} On Contract</td>
+      <td style="${labelStyle}">On-Contract</td>
       <td style="${valStyle} font-weight:700; color:var(--ink);">${fmtVarSummaryMoney(onContract)}</td>
       <td style="${valStylePika} white-space:nowrap;">${fmtVarSummaryMoney(onContractPika)}${pctOfOnContract(onContractPika)}</td>
       <td style="${valStyleTT} white-space:nowrap;">${fmtVarSummaryMoney(onContractTT)}${pctOfOnContract(onContractTT)}</td>
@@ -13193,7 +13196,7 @@ function renderVariationsSummary() {
       <td style="${valStylePika} white-space:nowrap;${labMismatch(wbLaborPika, calcLaborPikaCmp)}"${labTitle(wbLaborPika, calcLaborPikaCmp, odcNote)}>${fmtVarSummaryMoney(dispLaborPika)}${pctOfLabor(dispLaborPika)}${labDiffLine(wbLaborPika, calcLaborPikaCmp)}</td>
       <td style="${valStyleTT} white-space:nowrap;${labMismatch(wbLaborTT, calcLaborTT)}"${labTitle(wbLaborTT, calcLaborTT)}>${fmtVarSummaryMoney(dispLaborTT)}${pctOfLabor(dispLaborTT)}${labDiffLine(wbLaborTT, calcLaborTT)}</td>
       <td style="${valStyleBattelle} white-space:nowrap;${labMismatch(wbLaborBattelle, calcLaborBattelle)}"${labTitle(wbLaborBattelle, calcLaborBattelle)}>${fmtVarSummaryMoney(dispLaborBattelle)}${pctOfLabor(dispLaborBattelle)}${labDiffLine(wbLaborBattelle, calcLaborBattelle)}</td>
-      <td style="${valStyle} text-align:center;">${wbCheckPill(calcLaborTotal, wbLaborTotal)}</td>
+      <td style="${valStyle} text-align:center;">${qaCheck(dispLaborTotal, dispLaborPika, dispLaborTT, dispLaborBattelle)}</td>
     </tr>`;
 
     // BY adjustment row uses a uniform BRIGHT red across ALL
@@ -13307,15 +13310,17 @@ function renderVariationsSummary() {
             <th style="${gtHeaderTh} color:${PIKA_C};">PIKA</th>
             <th style="${gtHeaderTh} color:${TT_C};">TT</th>
             <th style="${gtHeaderTh} color:${BAT_C};">Battelle</th>
+            <th style="${gtHeaderTh} text-align:center;">QA</th>
           </tr>
         </thead>
         <tbody>
           <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
-            <td style="${gtRowLabel}">On Contract</td>
+            <td style="${gtRowLabel}">On-Contract</td>
             <td style="${gtCell}">${fmtVarSummaryMoney(grandTotals.fullContract)}</td>
             <td style="${gtCell} color:${PIKA_C};">${fmtVarSummaryMoney(grandTotals.fullContractPika)}${gtPct(grandTotals.fullContractPika, grandTotals.fullContract)}</td>
             <td style="${gtCell} color:${TT_C};">${fmtVarSummaryMoney(grandTotals.fullContractTT)}${gtPct(grandTotals.fullContractTT, grandTotals.fullContract)}</td>
             <td style="${gtCell} color:${BAT_C};">${fmtVarSummaryMoney(grandTotals.fullContractBattelle)}${gtPct(grandTotals.fullContractBattelle, grandTotals.fullContract)}</td>
+            <td style="${gtCell} text-align:center;">${qaCheck(grandTotals.fullContract, grandTotals.fullContractPika, grandTotals.fullContractTT, grandTotals.fullContractBattelle)}</td>
           </tr>
           <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
             <td style="${gtRowLabel}">Labor On-Contract</td>
@@ -13323,6 +13328,7 @@ function renderVariationsSummary() {
             <td style="${gtCell} color:${PIKA_C};">${fmtVarSummaryMoney(grandTotals.laborPika)}${gtPct(grandTotals.laborPika, grandTotals.laborTotal)}</td>
             <td style="${gtCell} color:${TT_C};">${fmtVarSummaryMoney(grandTotals.laborTT)}${gtPct(grandTotals.laborTT, grandTotals.laborTotal)}</td>
             <td style="${gtCell} color:${BAT_C};">${fmtVarSummaryMoney(grandTotals.laborBattelle)}${gtPct(grandTotals.laborBattelle, grandTotals.laborTotal)}</td>
+            <td style="${gtCell} text-align:center;">${qaCheck(grandTotals.laborTotal, grandTotals.laborPika, grandTotals.laborTT, grandTotals.laborBattelle)}</td>
           </tr>
           <tr style="border-top:2px solid #555;">
             <td style="${gtRowLabel}">After Adjustments</td>
@@ -13330,6 +13336,7 @@ function renderVariationsSummary() {
             <td style="${gtCell} color:${PIKA_C}; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjPika)}${gtPct(grandTotals.postAdjPika, grandTotals.postAdjustments)}</td>
             <td style="${gtCell} color:${TT_C}; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjTT)}${gtPct(grandTotals.postAdjTT, grandTotals.postAdjustments)}</td>
             <td style="${gtCell} color:${BAT_C}; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjBattelle)}${gtPct(grandTotals.postAdjBattelle, grandTotals.postAdjustments)}</td>
+            <td style="${gtCell} text-align:center;">${qaCheck(grandTotals.postAdjustments, grandTotals.postAdjPika, grandTotals.postAdjTT, grandTotals.postAdjBattelle)}</td>
           </tr>
         </tbody>
       </table>
