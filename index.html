@@ -12217,10 +12217,9 @@ function computeVarSummaryAdjustments(rd) {
       // Credit-funded BY sites: cost was satisfied by an
       // existing credit balance, not a fresh descope. Skip
       // them so the BY de-scope sum reflects only sites that
-      // are genuinely reducing the contract. Applied per-year
-      // but in practice only BY sites carry "Funded with
-      // Credit" — OY1-4 don't typically have this state.
-      if (siteFundedWithCredit(s)) continue;
+      // are genuinely reducing the contract. Only applies to
+      // BY — OY1-4 credit-funded sites still reduce contract.
+      if (yk === 'by' && siteFundedWithCredit(s)) continue;
       accumulate(rows[yk].descope, -1, s);
     }
   }
@@ -12280,7 +12279,9 @@ function computeVarSummaryDiff() {
       const excluded = siteIsConfirmedScheduled(s)
         || String(s.datesConfirmed || '').trim() === '';
       if (excluded) continue;
-      if (siteFundedWithCredit(s)) continue;
+      const yr = siteYearForGrouping(s);
+      const isByYear = yr === 'Base Year';
+      if (isByYear && siteFundedWithCredit(s)) continue;
       summaryById.set(s.id, { site: s });
     }
 
@@ -12297,7 +12298,7 @@ function computeVarSummaryDiff() {
       let excludedReason = '';
       if (inV && !inS) {
         // Variations included; Summary excluded — why?
-        if (siteFundedWithCredit(site)) excludedReason = 'Summary excludes: credit-funded BY';
+        if (siteFundedWithCredit(site) && siteYearForGrouping(site) === 'Base Year') excludedReason = 'Summary excludes: credit-funded BY';
         else if (cost === 0) excludedReason = 'Summary excludes: Total Cost = 0';
         else if (isClone) excludedReason = 'Variations clone (cost null) — Summary requires cost > 0';
         else excludedReason = 'Unknown — investigate';
