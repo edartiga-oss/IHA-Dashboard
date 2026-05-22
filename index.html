@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v49</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v50</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -13125,26 +13125,36 @@ function renderVariationsSummary() {
     // values (Total + per-company, resolved into dispLabor* above)
     // with mismatch highlight + tooltip when the funded-sites
     // CALCULATED amount diverges from the workbook source.
-    // Per-company cells include a small muted inline percentage
-    // of the row total.
+    // Mismatched cells get an extra small red "Δ +$X / Δ −$X"
+    // line under the main value so the gap is visible without
+    // hovering. Per-company cells include a small muted inline
+    // percentage of the row total.
     const labMismatch = (wbVal, calcVal) =>
       wbVal != null && Math.abs(wbVal - calcVal) > 1
         ? ' background:#fde7e7; box-shadow: inset 0 0 0 2px #c62828;'
         : '';
-    const labTitle = (wbVal, calcVal) =>
-      wbVal != null && Math.abs(wbVal - calcVal) > 1
-        ? ` title="Calculated from funded sites: ${fmtVarSummaryMoney(calcVal)}"`
-        : '';
+    const labTitle = (wbVal, calcVal) => {
+      if (wbVal == null || Math.abs(wbVal - calcVal) <= 1) return '';
+      const diff = calcVal - wbVal;
+      const sign = diff >= 0 ? '+' : '−';
+      return ` title="Calculated from funded sites: ${fmtVarSummaryMoney(calcVal)} · Δ ${sign}${fmtVarSummaryMoney(Math.abs(diff))}"`;
+    };
+    const labDiffLine = (wbVal, calcVal) => {
+      if (wbVal == null || Math.abs(wbVal - calcVal) <= 1) return '';
+      const diff = calcVal - wbVal;
+      const sign = diff >= 0 ? '+' : '−';
+      return `<div style="font-size:10px; font-weight:700; color:#c62828; margin-top:2px; font-family:'IBM Plex Mono',monospace;">Δ ${sign}${fmtVarSummaryMoney(Math.abs(diff))}</div>`;
+    };
     const pctOfLabor = (val) => dispLaborTotal > 0
       ? `<span style="color:var(--ink-mute); font-weight:500; font-size:11px; margin-left:8px;">${(val / dispLaborTotal * 100).toFixed(1)}%</span>`
       : '';
     const laborSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
     const rowLaborOnContract = `<tr style="${rowBorderStyle}">
       <td style="${labelStyle}">Labor On-Contract${laborSubNote}</td>
-      <td style="${valStyle} font-weight:700; color:var(--ink);${labMismatch(wbLaborTotal, calcLaborTotal)}"${labTitle(wbLaborTotal, calcLaborTotal)}>${fmtVarSummaryMoney(dispLaborTotal)}</td>
-      <td style="${valStylePika} white-space:nowrap;${labMismatch(wbLaborPika, calcLaborPika)}"${labTitle(wbLaborPika, calcLaborPika)}>${fmtVarSummaryMoney(dispLaborPika)}${pctOfLabor(dispLaborPika)}</td>
-      <td style="${valStyleTT} white-space:nowrap;${labMismatch(wbLaborTT, calcLaborTT)}"${labTitle(wbLaborTT, calcLaborTT)}>${fmtVarSummaryMoney(dispLaborTT)}${pctOfLabor(dispLaborTT)}</td>
-      <td style="${valStyleBattelle} white-space:nowrap;${labMismatch(wbLaborBattelle, calcLaborBattelle)}"${labTitle(wbLaborBattelle, calcLaborBattelle)}>${fmtVarSummaryMoney(dispLaborBattelle)}${pctOfLabor(dispLaborBattelle)}</td>
+      <td style="${valStyle} font-weight:700; color:var(--ink);${labMismatch(wbLaborTotal, calcLaborTotal)}"${labTitle(wbLaborTotal, calcLaborTotal)}>${fmtVarSummaryMoney(dispLaborTotal)}${labDiffLine(wbLaborTotal, calcLaborTotal)}</td>
+      <td style="${valStylePika} white-space:nowrap;${labMismatch(wbLaborPika, calcLaborPika)}"${labTitle(wbLaborPika, calcLaborPika)}>${fmtVarSummaryMoney(dispLaborPika)}${pctOfLabor(dispLaborPika)}${labDiffLine(wbLaborPika, calcLaborPika)}</td>
+      <td style="${valStyleTT} white-space:nowrap;${labMismatch(wbLaborTT, calcLaborTT)}"${labTitle(wbLaborTT, calcLaborTT)}>${fmtVarSummaryMoney(dispLaborTT)}${pctOfLabor(dispLaborTT)}${labDiffLine(wbLaborTT, calcLaborTT)}</td>
+      <td style="${valStyleBattelle} white-space:nowrap;${labMismatch(wbLaborBattelle, calcLaborBattelle)}"${labTitle(wbLaborBattelle, calcLaborBattelle)}>${fmtVarSummaryMoney(dispLaborBattelle)}${pctOfLabor(dispLaborBattelle)}${labDiffLine(wbLaborBattelle, calcLaborBattelle)}</td>
       <td style="${valStyle} text-align:center;">${wbCheckPill(calcLaborTotal, wbLaborTotal)}</td>
     </tr>`;
 
@@ -13967,17 +13977,15 @@ function escapeAttr(s) {
       const n = parseCellNumber(cell);
       if (isFinite(n)) { numCount++; sum += n; }
     });
-    if (count === 0) { hideTip(); return; }
+    // Count + Avg were dropped per user request — the drag-select
+    // tooltip only surfaces the Sum of the selected numeric cells
+    // now. Tooltip stays hidden when no numeric cells are in the
+    // selection (was previously showing "Count 0" with no Sum).
+    if (numCount === 0) { hideTip(); return; }
     const tip = ensureTip();
-    const avg = numCount > 0 ? sum / numCount : 0;
     const sumCls = sum < 0 ? 'val neg' : 'val';
-    const avgCls = avg < 0 ? 'val neg' : 'val';
     tip.innerHTML =
-      `<div class="row"><span class="lbl">Count</span><span class="val">${numCount}${count !== numCount ? ` / ${count}` : ''}</span></div>` +
-      (numCount > 0
-        ? `<div class="row"><span class="lbl">Sum</span><span class="${sumCls}">${fmt2(sum)}</span></div>` +
-          `<div class="row"><span class="lbl">Avg</span><span class="${avgCls}">${fmt2(avg)}</span></div>`
-        : '');
+      `<div class="row"><span class="lbl">Sum</span><span class="${sumCls}">${fmt2(sum)}</span></div>`;
     tip.style.display = 'block';
 
     const rect = (nearTd || Array.from(selected)[selected.size - 1]).getBoundingClientRect();
