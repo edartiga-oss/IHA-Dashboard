@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v29</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v30</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12074,10 +12074,16 @@ function renderVariations() {
 // Total = Funded Field + every adjustment.
 
 const VAR_SUMMARY_STORAGE_KEY = 'iha_var_summary_inputs_v1';
+// Separate key so user-promoted defaults survive a "Reset Inputs"
+// (which clears overrides but should fall back to whatever the
+// user has saved as their default for that RD).
+const VAR_SUMMARY_USER_DEFAULTS_KEY = 'iha_var_summary_user_defaults_v1';
 
-// Default contract inputs per RD. User edits persist via
-// localStorage; defaults match the figures the user provided
-// when this view was first requested.
+// Hardcoded fallback defaults per RD. The user can override the
+// fundedField via "Save as Default" (persisted to localStorage
+// under VAR_SUMMARY_USER_DEFAULTS_KEY); the hardcoded values
+// here are the floor that "Reset" falls back to only when no
+// user default has been set for that RD.
 const VAR_SUMMARY_DEFAULTS = {
   '63rd':   { onContract: 4974786.00, fundedField: 4195260.17 },
   '81st':   { onContract: 6206786.00, fundedField: 5022180.71 },
@@ -12112,6 +12118,32 @@ function saveVarSummaryInputs(obj) {
 
 let varSummaryInputs = loadVarSummaryInputs();
 
+function loadVarSummaryUserDefaults() {
+  try {
+    const raw = localStorage.getItem(VAR_SUMMARY_USER_DEFAULTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) { return {}; }
+}
+
+function saveVarSummaryUserDefaults(obj) {
+  try {
+    localStorage.setItem(VAR_SUMMARY_USER_DEFAULTS_KEY, JSON.stringify(obj));
+  } catch (e) { /* in-memory only */ }
+}
+
+let varSummaryUserDefaults = loadVarSummaryUserDefaults();
+
+// Effective default for an RD/key: user-saved default wins over
+// the hardcoded one. Used by getVarSummaryInput as the fallback
+// when there's no live override, and by resetVarSummaryInputs.
+function getVarSummaryDefault(rd, key) {
+  const userDef = varSummaryUserDefaults[rd];
+  if (userDef && userDef[key] != null) return Number(userDef[key]) || 0;
+  return (VAR_SUMMARY_DEFAULTS[rd] || {})[key] || 0;
+}
+
 // Toggle for showing per-year breakdown sub-rows (potential
 // descope + new sites cost). In-memory only — purely a view
 // preference, no need to persist.
@@ -12132,13 +12164,29 @@ function getVarSummaryInput(rd, key) {
   }
   const stored = varSummaryInputs[rd];
   if (stored && stored[key] != null) return Number(stored[key]) || 0;
-  return (VAR_SUMMARY_DEFAULTS[rd] || {})[key] || 0;
+  return getVarSummaryDefault(rd, key);
 }
 
 function setVarSummaryInput(rd, key, value) {
   if (!varSummaryInputs[rd]) varSummaryInputs[rd] = {};
   varSummaryInputs[rd][key] = Number(value) || 0;
   saveVarSummaryInputs(varSummaryInputs);
+  renderVariationsSummary();
+}
+
+// Promote the currently-displayed value (live override or
+// existing default) to this RD's user default. Future "Reset
+// Inputs" calls will restore to this value. The live override
+// is cleared so input === default cleanly after promotion.
+function setVarSummaryDefault(rd, key) {
+  const current = getVarSummaryInput(rd, key);
+  if (!varSummaryUserDefaults[rd]) varSummaryUserDefaults[rd] = {};
+  varSummaryUserDefaults[rd][key] = current;
+  saveVarSummaryUserDefaults(varSummaryUserDefaults);
+  if (varSummaryInputs[rd] && varSummaryInputs[rd][key] != null) {
+    delete varSummaryInputs[rd][key];
+    saveVarSummaryInputs(varSummaryInputs);
+  }
   renderVariationsSummary();
 }
 
@@ -12667,19 +12715,40 @@ function renderVariationsSummary() {
         + rowSub('New Sites Cost',    yearObj.newSites,   newSitesIsLast)
         + rowSub('BY Incurred Cost',  yearObj.byIncurred, byIncurredIsLast);
     };
-    const rowInput = (label, value, key) => `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${label}</td>
-      <td style="${valStyle}">
-        <input type="number" step="0.01"
-          value="${value.toFixed(2)}"
-          onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
-          style="${inputStyle}">
-      </td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${valStyle} text-align:center;">${qaNone}</td>
-    </tr>`;
+    const saveDefBtnStyle = "margin-left:6px; padding:2px 8px; font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; border:1px solid var(--line); background:#fff; color:var(--ink-mute); border-radius:3px; cursor:pointer; vertical-align:middle;";
+    const rowInput = (label, value, key) => {
+      // Mark when the current value matches the user-saved
+      // default so the "Save as Default" button can dim — there's
+      // nothing to save and the button text shifts to "Saved" to
+      // make the state obvious.
+      const userDef = (varSummaryUserDefaults[rd] || {})[key];
+      const hasUserDef = userDef != null;
+      const matchesUserDef = hasUserDef && Math.abs(Number(userDef) - value) < 0.005;
+      const btnLabel = matchesUserDef ? '✓ Saved' : 'Save as Default';
+      const btnTitle = matchesUserDef
+        ? `Current value matches saved default ($${Number(userDef).toFixed(2)})`
+        : (hasUserDef
+            ? `Save current value as default (current saved: $${Number(userDef).toFixed(2)})`
+            : 'Save current value as this RD\'s default — Reset will restore to it');
+      const btnExtra = matchesUserDef ? 'opacity:0.55; cursor:default;' : '';
+      return `<tr style="${rowBorderStyle}">
+        <td style="${labelStyle}">${label}</td>
+        <td style="${valStyle}">
+          <input type="number" step="0.01"
+            value="${value.toFixed(2)}"
+            onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
+            style="${inputStyle}">
+          <button type="button"
+            onclick="setVarSummaryDefault('${escapeAttr(rd)}', '${key}')"
+            style="${saveDefBtnStyle}${btnExtra}"
+            title="${escapeAttr(btnTitle)}">${btnLabel}</button>
+        </td>
+        <td style="${dashStyle}">—</td>
+        <td style="${dashStyle}">—</td>
+        <td style="${dashStyle}">—</td>
+        <td style="${valStyle} text-align:center;">${qaNone}</td>
+      </tr>`;
+    };
 
     const headerStyle = "padding:8px 12px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); border-bottom:2px solid #888; text-align:right; background:rgba(0,0,0,0.04);";
     const headerStyleCenter = headerStyle.replace('text-align:right','text-align:center');
