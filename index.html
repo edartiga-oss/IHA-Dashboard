@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v51</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v52</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -3779,6 +3779,7 @@ function getVarSummaryWorkbookValue(rd, key) {
     case 'laborTT':            return wb.fundedFieldByCo ? num(wb.fundedFieldByCo.tt)       : null;
     case 'laborBattelle':      return wb.fundedFieldByCo ? num(wb.fundedFieldByCo.battelle) : null;
     case 'laborTotal':         return num(wb.fundedField);
+    case 'pikaOdcGA':          return num(wb.fundedFieldPikaOdcGA);
     default:                   return null;
   }
 }
@@ -12688,17 +12689,17 @@ function showContractTotalsSource() {
     if (e.target === overlay) overlay.remove();
   });
   overlay.innerHTML = `
-    <div class="var-diff-modal" style="max-width:900px;" onclick="event.stopPropagation()">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px;">
+    <div class="var-diff-modal" style="width:900px; max-width:95vw; height:600px; max-height:90vh; min-width:520px; min-height:300px; resize:both; overflow:auto; display:flex; flex-direction:column;" onclick="event.stopPropagation()">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-shrink:0;">
         <div>
           <h2 style="margin:0; font-family:'DM Serif Display',serif;">Contract Totals Source</h2>
           <div style="font-size:12px; color:var(--ink-mute); margin-top:2px;">
-            Values parsed from the workbook's "Contract Totals" tab. These pre-fill the editable inputs on the Site Variations Summary below and back the WB ✓ / ✗ mismatch checks.
+            Values parsed from the workbook's "Contract Totals" tab. These pre-fill the editable inputs on the Site Variations Summary below and back the WB ✓ / ✗ mismatch checks. Drag the bottom-right corner to resize.
           </div>
         </div>
         <button class="nav-btn" onclick="this.closest('.var-diff-overlay').remove()" style="white-space:nowrap;">✕ Close</button>
       </div>
-      ${buildContractTotalsSourceHtml()}
+      <div style="flex:1; overflow:auto;">${buildContractTotalsSourceHtml()}</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -13151,15 +13152,27 @@ function renderVariationsSummary() {
     // line under the main value so the gap is visible without
     // hovering. Per-company cells include a small muted inline
     // percentage of the row total.
+    //
+    // PIKA overhead adjustment: when the workbook provides a
+    // "PIKA ODC and G&A" value (labor-row-only overhead), we
+    // subtract it from the funded-sites calculated amount BEFORE
+    // comparing to the workbook's labor-only PIKA figure. The
+    // workbook's labor PIKA excludes overhead by construction, so
+    // an apples-to-apples comparison needs the same exclusion on
+    // the calc side. Applies to the PIKA cell and the Total cell
+    // (since Total includes PIKA); TT and Battelle are unaffected.
+    const wbPikaOdcGA = getVarSummaryWorkbookValue(rd, 'pikaOdcGA');
+    const calcLaborPikaCmp  = wbPikaOdcGA != null ? calcLaborPika  - wbPikaOdcGA : calcLaborPika;
+    const calcLaborTotalCmp = wbPikaOdcGA != null ? calcLaborTotal - wbPikaOdcGA : calcLaborTotal;
     const labMismatch = (wbVal, calcVal) =>
       wbVal != null && Math.abs(wbVal - calcVal) > 1
         ? ' background:#fde7e7; box-shadow: inset 0 0 0 2px #c62828;'
         : '';
-    const labTitle = (wbVal, calcVal) => {
+    const labTitle = (wbVal, calcVal, note = '') => {
       if (wbVal == null || Math.abs(wbVal - calcVal) <= 1) return '';
       const diff = calcVal - wbVal;
       const sign = diff >= 0 ? '+' : '−';
-      return ` title="Calculated from funded sites: ${fmtVarSummaryMoney(calcVal)} · Δ ${sign}${fmtVarSummaryMoney(Math.abs(diff))}"`;
+      return ` title="Calculated from funded sites${note}: ${fmtVarSummaryMoney(calcVal)} · Δ ${sign}${fmtVarSummaryMoney(Math.abs(diff))}"`;
     };
     const labDiffLine = (wbVal, calcVal) => {
       if (wbVal == null || Math.abs(wbVal - calcVal) <= 1) return '';
@@ -13167,14 +13180,17 @@ function renderVariationsSummary() {
       const sign = diff >= 0 ? '+' : '−';
       return `<div style="font-size:10px; font-weight:700; color:#c62828; margin-top:2px; font-family:'IBM Plex Mono',monospace;">Δ ${sign}${fmtVarSummaryMoney(Math.abs(diff))}</div>`;
     };
+    const odcNote = wbPikaOdcGA != null
+      ? ` (less PIKA ODC &amp; G&amp;A ${fmtVarSummaryMoney(wbPikaOdcGA)})`
+      : '';
     const pctOfLabor = (val) => dispLaborTotal > 0
       ? `<span style="color:var(--ink-mute); font-weight:500; font-size:11px; margin-left:8px;">${(val / dispLaborTotal * 100).toFixed(1)}%</span>`
       : '';
     const laborSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
     const rowLaborOnContract = `<tr style="${rowBorderStyle}">
       <td style="${labelStyle}">Labor On-Contract${laborSubNote}</td>
-      <td style="${valStyle} font-weight:700; color:var(--ink);${labMismatch(wbLaborTotal, calcLaborTotal)}"${labTitle(wbLaborTotal, calcLaborTotal)}>${fmtVarSummaryMoney(dispLaborTotal)}${labDiffLine(wbLaborTotal, calcLaborTotal)}</td>
-      <td style="${valStylePika} white-space:nowrap;${labMismatch(wbLaborPika, calcLaborPika)}"${labTitle(wbLaborPika, calcLaborPika)}>${fmtVarSummaryMoney(dispLaborPika)}${pctOfLabor(dispLaborPika)}${labDiffLine(wbLaborPika, calcLaborPika)}</td>
+      <td style="${valStyle} font-weight:700; color:var(--ink);${labMismatch(wbLaborTotal, calcLaborTotalCmp)}"${labTitle(wbLaborTotal, calcLaborTotalCmp, odcNote)}>${fmtVarSummaryMoney(dispLaborTotal)}${labDiffLine(wbLaborTotal, calcLaborTotalCmp)}</td>
+      <td style="${valStylePika} white-space:nowrap;${labMismatch(wbLaborPika, calcLaborPikaCmp)}"${labTitle(wbLaborPika, calcLaborPikaCmp, odcNote)}>${fmtVarSummaryMoney(dispLaborPika)}${pctOfLabor(dispLaborPika)}${labDiffLine(wbLaborPika, calcLaborPikaCmp)}</td>
       <td style="${valStyleTT} white-space:nowrap;${labMismatch(wbLaborTT, calcLaborTT)}"${labTitle(wbLaborTT, calcLaborTT)}>${fmtVarSummaryMoney(dispLaborTT)}${pctOfLabor(dispLaborTT)}${labDiffLine(wbLaborTT, calcLaborTT)}</td>
       <td style="${valStyleBattelle} white-space:nowrap;${labMismatch(wbLaborBattelle, calcLaborBattelle)}"${labTitle(wbLaborBattelle, calcLaborBattelle)}>${fmtVarSummaryMoney(dispLaborBattelle)}${pctOfLabor(dispLaborBattelle)}${labDiffLine(wbLaborBattelle, calcLaborBattelle)}</td>
       <td style="${valStyle} text-align:center;">${wbCheckPill(calcLaborTotal, wbLaborTotal)}</td>
