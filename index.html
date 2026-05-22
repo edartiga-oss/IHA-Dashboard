@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v33</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v34</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12154,14 +12154,9 @@ function toggleVarSummaryDetails() {
 }
 
 function getVarSummaryInput(rd, key) {
-  // onContract is FIXED — it comes from CLINS task order totals
-  // minus a $25K reconciliation factor, baked into the defaults.
-  // Stored overrides are ignored for this key (the field is no
-  // longer editable in the UI; this guards against stale
-  // localStorage from when it was editable).
-  if (key === 'onContract') {
-    return (VAR_SUMMARY_DEFAULTS[rd] || {}).onContract || 0;
-  }
+  // Live override wins, then user-saved default, then the
+  // hardcoded default. Any unknown key falls through to 0 so
+  // new editable cells don't need explicit defaults entered.
   const stored = varSummaryInputs[rd];
   if (stored && stored[key] != null) return Number(stored[key]) || 0;
   return getVarSummaryDefault(rd, key);
@@ -12799,6 +12794,70 @@ function renderVariationsSummary() {
       </tr>`;
     };
 
+    // Compact editable money cell — narrow input + tiny ★ save-
+    // as-default button. Used by the On Contract / Labor On-
+    // Contract rows where multiple columns are individually
+    // editable and the wider "Save as Default" button style
+    // would not fit. Button flips to ✓ and dims when the
+    // displayed value matches the saved user default for the key.
+    const editCell = (key, value, color) => {
+      const userDef = (varSummaryUserDefaults[rd] || {})[key];
+      const hasUserDef = userDef != null;
+      const matchesUserDef = hasUserDef && Math.abs(Number(userDef) - value) < 0.005;
+      const btnLabel = matchesUserDef ? '✓' : '★';
+      const btnTitle = matchesUserDef
+        ? `Saved as default ($${Number(userDef).toFixed(2)})`
+        : (hasUserDef
+            ? `Save as default (current saved: $${Number(userDef).toFixed(2)})`
+            : 'Save current value as this RD\'s default');
+      const btnColor = matchesUserDef ? '#2e7d32' : 'var(--ink-mute)';
+      const btnExtra = matchesUserDef ? 'opacity:0.6; cursor:default;' : '';
+      const inStyle = `width:110px; padding:3px 6px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; border:1px solid var(--line); background:#fff; color:${color}; font-weight:700;`;
+      const btnStyle = `margin-left:4px; padding:1px 5px; font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; border:1px solid var(--line); background:#fff; border-radius:3px; cursor:pointer; vertical-align:middle; color:${btnColor}; ${btnExtra}`;
+      return `<td style="padding:5px 8px; text-align:right; white-space:nowrap;">
+        <input type="number" step="0.01"
+          value="${value.toFixed(2)}"
+          onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
+          style="${inStyle}">
+        <button type="button"
+          onclick="setVarSummaryDefault('${escapeAttr(rd)}', '${key}')"
+          style="${btnStyle}"
+          title="${escapeAttr(btnTitle)}">${btnLabel}</button>
+      </td>`;
+    };
+
+    // Labor On-Contract row: PIKA is editable, TT and Battelle
+    // are calculated from the funded-sites raw cost split (the
+    // values that used to populate the On Contract row before
+    // this row existed). TOTAL auto-sums the three so the QA
+    // check always passes by construction.
+    const laborPika = getVarSummaryInput(rd, 'laborPika');
+    const laborTT = fundedPerCo.tt;
+    const laborBattelle = fundedPerCo.battelle;
+    const laborTotal = laborPika + laborTT + laborBattelle;
+    const rowLaborOnContract = `<tr style="${rowBorderStyle}">
+      <td style="${labelStyle}">Labor On-Contract</td>
+      <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(laborTotal)}</td>
+      ${editCell('laborPika', laborPika, PIKA_DARK)}
+      <td style="${valStyleTT}">${fmtVarSummaryMoney(laborTT)}</td>
+      <td style="${valStyleBattelle}">${fmtVarSummaryMoney(laborBattelle)}</td>
+      <td style="${valStyle} text-align:center;">${qaCheck(laborTotal, laborPika, laborTT, laborBattelle)}</td>
+    </tr>`;
+
+    // RD On-Contract: all 4 columns editable so the user can
+    // enter contract figures directly. QA checks the sum.
+    const onContractPika = getVarSummaryInput(rd, 'onContractPika');
+    const onContractTT = getVarSummaryInput(rd, 'onContractTT');
+    const onContractBattelle = getVarSummaryInput(rd, 'onContractBattelle');
+    const rowOnContract = `<tr style="${rowBorderStyle}">
+      <td style="${labelStyle}">${escapeHtml(rd)} On Contract</td>
+      ${editCell('onContract', onContract, '#a00')}
+      ${editCell('onContractPika', onContractPika, PIKA_DARK)}
+      ${editCell('onContractTT', onContractTT, TT_DARK)}
+      ${editCell('onContractBattelle', onContractBattelle, BAT_DARK)}
+      <td style="${valStyle} text-align:center;">${qaCheck(onContract, onContractPika, onContractTT, onContractBattelle)}</td>
+    </tr>`;
+
     // BY adjustment row uses a uniform BRIGHT red across ALL
     // cells (label, total, per-company, QA) to signal that BY
     // descopes are OFFICIAL (the contract has formally let
@@ -12862,7 +12921,8 @@ function renderVariationsSummary() {
             </tr>
           </thead>
           <tbody>
-            ${rowFixed(`${escapeHtml(rd)} On Contract`, onContract, fundedPerCo)}
+            ${rowLaborOnContract}
+            ${rowOnContract}
             ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField')}
             ${rowAdjByWithDetails('BY de-scope', adj.by)}
             ${rowAdjWithDetails('OY1 Adjustment', adj.oy1)}
