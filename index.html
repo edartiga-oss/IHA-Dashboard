@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v39</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v40</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -13036,6 +13036,43 @@ function renderVariationsSummary() {
     </div>
   `;
 
+  // Contract Totals source-of-truth panel. Renders the values
+  // parseContractTotals() pulled from the workbook's "Contract
+  // Totals" tab so the user can verify what the parser saw
+  // without hovering each row's WB QA pill. Hidden when no
+  // workbook was loaded (or it didn't have the tab).
+  const wbRows = VAR_SUMMARY_RD_ORDER
+    .map(rd => ({ rd, wb: contractTotalsFromWorkbook[rd] }))
+    .filter(x => x.wb && (x.wb.onContract != null || x.wb.fundedField != null));
+  const contractTotalsPanelHtml = wbRows.length === 0 ? '' : `
+    <div style="margin:18px 18px 0; padding:12px 16px; background:rgba(0,0,0,0.03); border:1px solid var(--line); border-radius:4px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); margin-bottom:8px;">
+        Contract Totals · source: workbook "Contract Totals" tab
+      </div>
+      <table style="border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px;">
+        <thead>
+          <tr>
+            <th style="text-align:left; padding:4px 16px 4px 0; color:var(--ink-mute); font-weight:600;">RD / MSC</th>
+            <th style="text-align:right; padding:4px 16px; color:var(--ink-mute); font-weight:600;">On Contract</th>
+            <th style="text-align:right; padding:4px 0 4px 16px; color:var(--ink-mute); font-weight:600;">Labor (Funded Field)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${wbRows.map(({ rd, wb }) => `
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:var(--ink); font-weight:600;">${escapeHtml(rd)}</td>
+              <td style="padding:3px 16px; text-align:right; color:var(--ink);">${wb.onContract != null ? fmtVarSummaryMoney(wb.onContract) : '<span style="color:var(--ink-mute);">—</span>'}</td>
+              <td style="padding:3px 0 3px 16px; text-align:right; color:var(--ink);">${wb.fundedField != null ? fmtVarSummaryMoney(wb.fundedField) : '<span style="color:var(--ink-mute);">—</span>'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div style="font-size:11px; color:var(--ink-mute); margin-top:8px; font-style:italic;">
+        QA pills (WB ✓ / WB ✗) compare entered values against these.
+      </div>
+    </div>
+  `;
+
   document.getElementById('viewMain').innerHTML = `
     <div class="panel">
       <div class="panel-head">
@@ -13048,9 +13085,9 @@ function renderVariationsSummary() {
             title="Show sub-rows under each year's adjustment with the Potential Descope and New Sites Cost components">${varSummaryShowDetails ? '✓ ' : ''}Show Details</button>
           <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Clear local overrides — values revert to workbook (Contract Totals) or hardcoded defaults">Reset Inputs</button>
           <button class="nav-btn" onclick="showVariationsSummaryDiff()" title="Diagnostic: compare the descope site set used here vs the Site Variations tab's Scope Changes section">Diff with Variations</button>
-          <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Reset Funded Field values to defaults">Reset Inputs</button>
         </div>
       </div>
+      ${contractTotalsPanelHtml}
       <div style="padding:18px;">
         ${rdSectionsHtml}
         ${bottomTotalsHtml}
