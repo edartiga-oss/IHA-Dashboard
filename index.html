@@ -2470,8 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v38</span>
-    <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v39</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -2480,7 +2479,7 @@
     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
       Load Workbook
     </button>
-    <button class="upload-btn" onclick="fetchWorkbookFromDrive()" data-cloud-url-target title="Fetch the latest .xlsx from Drive (and the team's state overlay)">
+    <button class="upload-btn" onclick="fetchWorkbookFromDrive()" data-cloud-url-target title="Fetch the latest .xlsx from Drive">
       Load from Cloud
     </button>
     <button class="upload-btn" onclick="setCloudWorkbookUrl()" title="Set / change the Apps Script Web App URL" style="background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);padding:6px 10px;">
@@ -2498,7 +2497,7 @@
       <button class="big-btn" onclick="fetchWorkbookFromDrive()">Load from Cloud</button>
     </div>
     <div id="cloudFilePreview" class="hint" style="margin-top:14px;">Checking the cloud for the latest workbook…</div>
-    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest .xlsx from Drive and the team's overlay edits in one shot. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
+    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest .xlsx from Drive. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
   </div>
 </div>
 
@@ -2796,18 +2795,14 @@ function displayName(s) {
 // ====================================================================
 // FILE LOADING
 // ====================================================================
-// Apps Script Web App that returns the team's overlay STATE
-// (visitEdits, snapshotDate, constraints, etc.) as JSON. The workbook
-// itself is still loaded locally via Load Workbook — Sync State only
-// fetches edits/annotations to layer on top.
+// Apps Script Web App URL used by Load from Cloud (and the
+// preview peek). The cloud workbook loader fetches the latest
+// .xlsx from the team's Drive folder via this endpoint — no
+// state/overlay sync runs anymore. localStorage stores any
+// user-supplied override; absent that, the default URL below
+// is used.
 const DEFAULT_CLOUD_STATE_URL = 'https://script.google.com/macros/s/AKfycbw4KaPT09sZltWpuOrqLvN0weOeT0VfBx-nDR_hQAZCNIRa8YI-wTR-frNGh67wA7Y/exec';
 const CLOUD_URL_STORAGE_KEY = 'usar.cloudStateUrl';
-
-// In-memory cloud state, populated by syncCloudState(). Tabs can read
-// from this once it's set; the actual merge logic per field is wired
-// in incrementally as the state schema firms up.
-let cloudState = null;
-let cloudStateLastSyncedAt = null;
 
 function getCloudStateUrl() {
   try {
@@ -2820,7 +2815,7 @@ function getCloudStateUrl() {
 function setCloudWorkbookUrl() {
   const current = getCloudStateUrl();
   const next = window.prompt(
-    'Enter the Apps Script Web App URL to use for "Sync State".\n' +
+    'Enter the Apps Script Web App URL to use for Load from Cloud.\n' +
     '(Leave blank to reset to the default.)',
     current
   );
@@ -2842,78 +2837,6 @@ function setCloudWorkbookUrl() {
   const active = getCloudStateUrl();
   const titleEl = document.querySelector('[data-cloud-url-target]');
   if (titleEl) titleEl.title = 'Active Web App URL: ' + active;
-}
-
-function updateStateBadge() {
-  const el = document.getElementById('stateBadge');
-  if (!el) return;
-  if (!cloudState) {
-    el.style.display = 'none';
-    return;
-  }
-  const v = cloudState.version != null ? cloudState.version : '?';
-  const d = cloudState.snapshotDate
-    || (typeof cloudState.savedAt === 'string' ? cloudState.savedAt.slice(0, 10) : '');
-  const by = cloudState.updatedBy ? ' · ' + cloudState.updatedBy : '';
-  el.textContent = 'state v' + v + (d ? ' · ' + d : '') + by;
-  el.style.display = 'inline-block';
-  const synced = cloudStateLastSyncedAt
-    ? ' (synced ' + cloudStateLastSyncedAt.toLocaleTimeString() + ')'
-    : '';
-  el.title = 'Cloud state v' + v + synced;
-}
-
-async function syncCloudState() {
-  const url = getCloudStateUrl();
-  const badge = document.getElementById('stateBadge');
-  if (badge) {
-    badge.textContent = 'syncing…';
-    badge.style.display = 'inline-block';
-    badge.title = 'Fetching state from ' + url;
-  }
-  try {
-    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-    const text = await resp.text();
-    let parsed;
-    try { parsed = JSON.parse(text); }
-    catch (_) {
-      throw new Error('Response is not JSON.\n\nFirst bytes:\n' + (text.length > 240 ? text.slice(0, 240) + '…' : text));
-    }
-    if (!parsed || parsed.ok === false) {
-      throw new Error('Web App returned { ok: false } or an unexpected shape.\n\n' + JSON.stringify(parsed).slice(0, 240));
-    }
-    cloudState = parsed.state || parsed;
-    cloudStateLastSyncedAt = new Date();
-    updateStateBadge();
-    console.log('[cloudState] synced', cloudState);
-    // Re-render so any overlay-aware view picks up the new state. No
-    // field-level merge yet — that's wired per-tab once the schema is
-    // confirmed against real data.
-    if (typeof allSites !== 'undefined' && allSites && allSites.length && typeof renderApp === 'function') {
-      renderApp();
-    }
-  } catch (err) {
-    if (badge) {
-      badge.textContent = 'sync failed';
-      badge.style.display = 'inline-block';
-      badge.title = err.message;
-    }
-    const usingDefault = url === DEFAULT_CLOUD_STATE_URL;
-    const showInContent = !(typeof allSites !== 'undefined' && allSites && allSites.length);
-    if (showInContent) {
-      document.getElementById('content').innerHTML =
-        `<div class="empty"><h2>State sync failed</h2>` +
-        `<p style="white-space:pre-wrap;text-align:left;max-width:720px;margin:0 auto;">${escapeHtml(err.message)}</p>` +
-        `<p class="hint">Active Web App URL: <code style="word-break:break-all;">${escapeHtml(url)}</code>` +
-        (usingDefault ? '' : ' <em>(custom)</em>') + `</p>` +
-        `<p><button class="big-btn" onclick="setCloudWorkbookUrl()">Set Web App URL</button></p>` +
-        `</div>`;
-    } else {
-      window.alert('State sync failed:\n\n' + err.message);
-    }
-    console.error(err);
-  }
 }
 
 // Fetches the latest Master Schedule .xlsx from the Apps Script Web App
@@ -2953,10 +2876,6 @@ async function fetchWorkbookFromDrive() {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const displayName = parsed.name || 'Master IHA workbook (from Drive)';
     processWorkbookBuffer(bytes.buffer, displayName);
-    // Pull the team's state overlay (visitEdits, loeEdits, constraints)
-    // in the background so the badge populates and overlay-aware views
-    // see the latest edits — replaces the standalone Sync State button.
-    syncCloudState();
     return true;
   } catch (err) {
     console.error('[workbook] fetch failed', err);
@@ -2979,9 +2898,8 @@ async function fetchWorkbookFromDrive() {
 // Lightweight peek at what the cloud currently has — fires masterInfo
 // (filename + mtime + size, no base64 payload) so the empty state can
 // preview the file the user would download if they click "Load from
-// Cloud". Runs on page open, then the user decides whether to pull the
-// full workbook. Doesn't touch state — that still happens via the
-// Sync State button or after a workbook loads.
+// Cloud". Runs on page open; the user decides whether to pull the
+// full workbook.
 async function peekCloudWorkbook() {
   const el = document.getElementById('cloudFilePreview');
   if (!el) return;
