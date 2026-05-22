@@ -2440,7 +2440,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v19</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v20</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -13031,6 +13031,10 @@ function escapeAttr(s) {
   let selecting = false;
   let anchor = null;          // { table, row, col }
   let selected = new Set();   // Set<HTMLTableCellElement>
+  let baseSelected = null;    // Frozen prior islands (Ctrl-add) preserved
+                              // while the current rect is being drawn.
+                              // null = no frozen islands; a fresh drag
+                              // replaces everything.
   let tooltip = null;
   let lastTd = null;
 
@@ -13045,15 +13049,19 @@ function escapeAttr(s) {
   function clearSel() {
     selected.forEach(c => c.classList.remove('cell-selected'));
     selected.clear();
+    baseSelected = null;
     hideTip();
   }
 
-  function applyRect(a, b) {
+  function applyRect(a, b, base) {
     if (!a || !b || a.table !== b.table) return;
     const r0 = Math.min(a.row, b.row), r1 = Math.max(a.row, b.row);
     const c0 = Math.min(a.col, b.col), c1 = Math.max(a.col, b.col);
     selected.forEach(c => c.classList.remove('cell-selected'));
     selected.clear();
+    if (base) {
+      base.forEach(c => { c.classList.add('cell-selected'); selected.add(c); });
+    }
     const rows = a.table.rows;
     for (let r = r0; r <= r1; r++) {
       const tr = rows[r]; if (!tr) continue;
@@ -13146,15 +13154,50 @@ function escapeAttr(s) {
     if (!pos) return;
     e.preventDefault();
     document.body.classList.add('cell-selecting');
-    if (e.shiftKey && anchor && anchor.table === pos.table) {
-      applyRect(anchor, pos);
-    } else {
-      anchor = pos;
-      selected.forEach(c => c.classList.remove('cell-selected'));
-      selected.clear();
+
+    const meta = e.ctrlKey || e.metaKey;
+
+    if (meta) {
+      // Ctrl/Cmd modifier: non-contiguous multi-select.
+      //  - On an unselected cell: freeze existing islands, add this cell,
+      //    and let a drag from here paint a NEW rectangle on top of the
+      //    frozen islands.
+      //  - On an already-selected cell: toggle it off (no drag).
+      if (selected.has(td)) {
+        td.classList.remove('cell-selected');
+        selected.delete(td);
+        selecting = false;
+        if (selected.size > 0) showTip(td);
+        else { hideTip(); anchor = null; baseSelected = null; }
+        return;
+      }
+      baseSelected = new Set(selected);
       td.classList.add('cell-selected');
       selected.add(td);
+      anchor = pos;
+      selecting = true;
+      lastTd = td;
+      showTip(td);
+      return;
     }
+
+    if (e.shiftKey && anchor && anchor.table === pos.table) {
+      // Shift extends from existing anchor. Any frozen prior islands
+      // (from earlier Ctrl-add operations) are preserved.
+      applyRect(anchor, pos, baseSelected);
+      selecting = true;
+      lastTd = td;
+      showTip(td);
+      return;
+    }
+
+    // Plain mousedown: start fresh, drop frozen islands.
+    baseSelected = null;
+    anchor = pos;
+    selected.forEach(c => c.classList.remove('cell-selected'));
+    selected.clear();
+    td.classList.add('cell-selected');
+    selected.add(td);
     selecting = true;
     lastTd = td;
     showTip(td);
@@ -13167,7 +13210,7 @@ function escapeAttr(s) {
     const pos = cellPos(td);
     if (!pos || pos.table !== anchor.table) return;
     if (lastTd === td) { return; }
-    applyRect(anchor, pos);
+    applyRect(anchor, pos, baseSelected);
     lastTd = td;
     showTip(td);
   });
