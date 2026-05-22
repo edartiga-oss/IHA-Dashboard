@@ -1295,6 +1295,16 @@
     font-weight: 600;
     color: var(--ink);
   }
+  .sl-table tbody tr.sl-totals-row td .sl-totals-sub-note {
+    font-size: 10px;
+    font-weight: 500;
+    font-style: italic;
+    margin-top: 2px;
+    opacity: 0.78;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
   .sl-table tbody tr.sl-totals-row td.sl-totals-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
@@ -2403,6 +2413,53 @@
      removed on afterprint), but defensively hide it via CSS too. */
   .sl-cprint-container { display: none; }
   .inv-cprint-container { display: none; }
+
+  /* Excel-style cell selection (click-drag to select; tooltip shows sum). */
+  td.cell-selected {
+    background: rgba(59,130,246,0.22) !important;
+    box-shadow: inset 0 0 0 1px rgba(37,99,235,0.65);
+  }
+  .cell-sum-tooltip {
+    position: fixed;
+    display: none;
+    background: #111827;
+    color: #f9fafb;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    z-index: 99999;
+    pointer-events: none;
+    min-width: 150px;
+    line-height: 1.55;
+    white-space: nowrap;
+  }
+  .cell-sum-tooltip .row { display: flex; justify-content: space-between; gap: 12px; }
+  .cell-sum-tooltip .lbl { color: #9ca3af; }
+  .cell-sum-tooltip .val { color: #f9fafb; font-variant-numeric: tabular-nums; }
+  .cell-sum-tooltip .val.neg { color: #fca5a5; }
+  body.cell-selecting { user-select: none; }
+
+  /* Diagnostic modal: Site Variations Summary "Diff with Variations". */
+  .var-diff-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 100000;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 32px;
+    overflow-y: auto;
+  }
+  .var-diff-modal {
+    background: #fff;
+    border-radius: 8px;
+    width: 100%;
+    max-width: 1200px;
+    padding: 18px 22px 22px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
 </style>
 </head>
 <body>
@@ -2423,10 +2480,10 @@
     <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
       Load Workbook
     </button>
-    <button class="upload-btn" onclick="syncCloudState()" data-cloud-url-target title="Fetch latest state (edits/snapshot) from the Apps Script Web App">
-      Sync State
+    <button class="upload-btn" onclick="fetchWorkbookFromDrive()" data-cloud-url-target title="Fetch the latest .xlsx from Drive (and the team's state overlay)">
+      Load from Cloud
     </button>
-    <button class="upload-btn" onclick="setCloudWorkbookUrl()" title="Set / change the Apps Script Web App URL used by Sync State" style="background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);padding:6px 10px;">
+    <button class="upload-btn" onclick="setCloudWorkbookUrl()" title="Set / change the Apps Script Web App URL" style="background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);padding:6px 10px;">
       ⚙
     </button>
   </div>
@@ -2441,7 +2498,7 @@
       <button class="big-btn" onclick="fetchWorkbookFromDrive()">Load from Cloud</button>
     </div>
     <div id="cloudFilePreview" class="hint" style="margin-top:14px;">Checking the cloud for the latest workbook…</div>
-    <div class="hint">All processing happens locally in your browser — nothing is uploaded. Once a workbook is loaded, click <em>Sync State</em> to fetch the latest edits/snapshot from the team's Apps Script Web App. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
+    <div class="hint">All processing happens locally in your browser — nothing is uploaded. <em>Load from Cloud</em> pulls the latest .xlsx from Drive and the team's overlay edits in one shot. <a href="#" onclick="event.preventDefault();setCloudWorkbookUrl();" style="color:var(--accent);text-decoration:underline;">Set Web App URL</a></div>
   </div>
 </div>
 
@@ -2896,6 +2953,10 @@ async function fetchWorkbookFromDrive() {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     const displayName = parsed.name || 'Master IHA workbook (from Drive)';
     processWorkbookBuffer(bytes.buffer, displayName);
+    // Pull the team's state overlay (visitEdits, loeEdits, constraints)
+    // in the background so the badge populates and overlay-aware views
+    // see the latest edits — replaces the standalone Sync State button.
+    syncCloudState();
     return true;
   } catch (err) {
     console.error('[workbook] fetch failed', err);
@@ -6768,13 +6829,13 @@ const SITES_LIST_COLS = [
     get: s => s.incurredCost == null ? '' : fmtMoney2dp(s.incurredCost),
     sortGet: s => s.incurredCost, summable: true,
     filterType: 'numRange', filterValue: s => s.incurredCost },
-  // Total Contract Value after subtracting Incurred Cost. Same
-  // arithmetic as Credit Available (cost − incurred) but exists
-  // as its own column so the Scope Changes view can show the
-  // running contract value immediately after Incurred Cost,
-  // labeled in contract terms rather than "credit" terms. Blank
-  // when Total Cost is null (e.g. incurred-only clone rows).
-  { key: 'contractValueAfterIncurred', label: 'Total Contract Value (Incurred cost subtracted)', cls: 'num',
+  // Total Contract Value after subtracting Incurred Cost — the initial
+  // pool of credit available before any descope deductions are applied.
+  // Same arithmetic as Credit Available (cost − incurred); exists as
+  // its own column so Scope Changes can show the running contract
+  // value immediately after Incurred Cost. Blank when Total Cost is
+  // null (e.g. incurred-only clone rows).
+  { key: 'contractValueAfterIncurred', label: 'Initial Credit Available', cls: 'num',
     get: s => {
       if (s.cost == null) return '';
       const c = Number(s.cost) || 0;
@@ -6801,6 +6862,40 @@ const SITES_LIST_COLS = [
     summable: true,
     filterType: 'numRange',
     filterValue: s => (Number(s.cost) || 0) - (Number(s.incurredCost) || 0),
+  },
+  // Credit Used — per-row contribution to the summary box's "Contract
+  // Credit Used" figure. Blank unless the row is tinted green by the
+  // active highlight window (PSC or Final Report approved in window).
+  // BY sites whose incurred rolls forward to OY1 (completely descoped
+  // OR incurred-only clones) are also blank: their incurred is moved
+  // out of the BY books to OY1 via the rollforward and is accounted
+  // for in the summary box's "−BY rollforward" subtraction. Showing
+  // them here as a negative Credit Used would double-count the same
+  // dollar. When green and not a rollforward source, equals Total Cost
+  // − Incurred Cost so the column total matches the summary exactly.
+  { key: 'creditUsed', label: 'Credit Used', cls: 'num',
+    get: s => {
+      const pred = getHighlightPredicate();
+      if (!pred || pred(s) !== 'green') return '';
+      if (siteRollsForwardToOy1(s)) return '';
+      const c = Number(s.cost) || 0;
+      const i = Number(s.incurredCost) || 0;
+      return fmtMoney2dp(c - i);
+    },
+    sortGet: s => {
+      const pred = getHighlightPredicate();
+      if (!pred || pred(s) !== 'green') return null;
+      if (siteRollsForwardToOy1(s)) return null;
+      return (Number(s.cost) || 0) - (Number(s.incurredCost) || 0);
+    },
+    summable: true,
+    filterType: 'numRange',
+    filterValue: s => {
+      const pred = getHighlightPredicate();
+      if (!pred || pred(s) !== 'green') return null;
+      if (siteRollsForwardToOy1(s)) return null;
+      return (Number(s.cost) || 0) - (Number(s.incurredCost) || 0);
+    },
   },
   { key: 'cih',          label: 'CIH',                 cls: 'num',
     get: s => s.cih      == null ? '' : fmtMoney2dp(s.cih),
@@ -6911,12 +7006,12 @@ const SITES_LIST_COLS = [
   { key: 'descopePika', label: 'PIKA Original Subcontract Amount', cls: 'num co-pika',
     get: s => {
       const v = computeDescopePerCompany(s).pika;
-      return v > 0 ? fmtMoney2dp(-v) : '';
+      return v > 0 ? fmtMoney2dp(v) : '';
     },
-    sortGet:     s => -computeDescopePerCompany(s).pika,
+    sortGet:     s => computeDescopePerCompany(s).pika,
     summable:    true,
     filterType:  'numRange',
-    filterValue: s => -computeDescopePerCompany(s).pika,
+    filterValue: s => computeDescopePerCompany(s).pika,
   },
   { key: 'incurredPika', label: 'PIKA Retains or Additions', cls: 'num co-pika',
     get: s => {
@@ -6928,7 +7023,7 @@ const SITES_LIST_COLS = [
     filterType:  'numRange',
     filterValue: s => computeIncurredPerCompany(s).pika,
   },
-  { key: 'netAdjustPika', label: 'PIKA Net Adjustment', cls: 'num co-pika',
+  { key: 'netAdjustPika', label: 'PIKA Net Adjustment (Retains − Original)', cls: 'num co-pika',
     get: s => {
       const v = computeIncurredPerCompany(s).pika - computeDescopePerCompany(s).pika;
       return v !== 0 ? fmtMoney2dp(v) : '';
@@ -6941,12 +7036,12 @@ const SITES_LIST_COLS = [
   { key: 'descopeTT',   label: 'TT Original Subcontract Amount',   cls: 'num co-tt',
     get: s => {
       const v = computeDescopePerCompany(s).tt;
-      return v > 0 ? fmtMoney2dp(-v) : '';
+      return v > 0 ? fmtMoney2dp(v) : '';
     },
-    sortGet:     s => -computeDescopePerCompany(s).tt,
+    sortGet:     s => computeDescopePerCompany(s).tt,
     summable:    true,
     filterType:  'numRange',
-    filterValue: s => -computeDescopePerCompany(s).tt,
+    filterValue: s => computeDescopePerCompany(s).tt,
   },
   { key: 'incurredTT', label: 'TT Retains or Additions', cls: 'num co-tt',
     get: s => {
@@ -6958,7 +7053,7 @@ const SITES_LIST_COLS = [
     filterType:  'numRange',
     filterValue: s => computeIncurredPerCompany(s).tt,
   },
-  { key: 'netAdjustTT', label: 'TT Net Adjustment', cls: 'num co-tt',
+  { key: 'netAdjustTT', label: 'TT Net Adjustment (Retains − Original)', cls: 'num co-tt',
     get: s => {
       const v = computeIncurredPerCompany(s).tt - computeDescopePerCompany(s).tt;
       return v !== 0 ? fmtMoney2dp(v) : '';
@@ -6971,12 +7066,12 @@ const SITES_LIST_COLS = [
   { key: 'descopeBattelle', label: 'Battelle Original Subcontract Amount', cls: 'num co-battelle',
     get: s => {
       const v = computeDescopePerCompany(s).battelle;
-      return v > 0 ? fmtMoney2dp(-v) : '';
+      return v > 0 ? fmtMoney2dp(v) : '';
     },
-    sortGet:     s => -computeDescopePerCompany(s).battelle,
+    sortGet:     s => computeDescopePerCompany(s).battelle,
     summable:    true,
     filterType:  'numRange',
-    filterValue: s => -computeDescopePerCompany(s).battelle,
+    filterValue: s => computeDescopePerCompany(s).battelle,
   },
   { key: 'incurredBattelle', label: 'Battelle Retains or Additions', cls: 'num co-battelle',
     get: s => {
@@ -6988,7 +7083,7 @@ const SITES_LIST_COLS = [
     filterType:  'numRange',
     filterValue: s => computeIncurredPerCompany(s).battelle,
   },
-  { key: 'netAdjustBattelle', label: 'Battelle Net Adjustment', cls: 'num co-battelle',
+  { key: 'netAdjustBattelle', label: 'Battelle Net Adjustment (Retains − Original)', cls: 'num co-battelle',
     get: s => {
       const v = computeIncurredPerCompany(s).battelle - computeDescopePerCompany(s).battelle;
       return v !== 0 ? fmtMoney2dp(v) : '';
@@ -7529,6 +7624,22 @@ function computeBaseYearRollforward(sites) {
   return total;
 }
 
+// Whether this site is a source of the BY→OY1 incurred rollforward.
+// Mirrors the predicate inside computeBaseYearRollforward — Base Year
+// sites that are either completely descoped (red) or are incurred-
+// only clones contribute their incurred to OY1's books. Used by the
+// row-level Credit Used column and the summary box's Contract Credit
+// Used calc to skip these sites from the green-row sum: their
+// incurred has been rolled away, so counting it as negative Credit
+// Used would double-deduct what the "−BY rollforward" subtraction
+// already handles.
+function siteRollsForwardToOy1(s) {
+  if (!s) return false;
+  const yr = String(s.year || '').trim().toLowerCase();
+  if (yr !== 'base year') return false;
+  return siteIsCompletelyDescoped(s) || s._scopeChangesIncurredOnly === true;
+}
+
 // "Confirmed scheduled scope variation" — sites that should be
 // EXCLUDED from the Scope Changes table because their dates are
 // confirmed and they're effectively a planned visit at this point,
@@ -7687,7 +7798,7 @@ const LIST_VIEWS = {
     // State), and the full financial breakdown.
     defaultOrder: () => [
       'id', 'rd', 'year', 'priority', 'team', 'state', 'clin',
-      'cost', 'incurredCost', 'contractValueAfterIncurred', 'creditAvailable', 'cih', 'leadIH', 'addCost', 'teamCost', 'qaCheck',
+      'cost', 'incurredCost', 'contractValueAfterIncurred', 'creditAvailable', 'creditUsed', 'cih', 'leadIH', 'addCost', 'teamCost', 'qaCheck',
     ],
     showTotalsRow: true, // sum every numeric (sortGet-defined) column at the top
     groupByRd: true,     // group rows under collapsible RD subheaders
@@ -7805,6 +7916,10 @@ function loadListViewColumnOrder(viewKey) {
       // picker.
       arr = insertAfter(arr, 'contractValueAfterIncurred', 'incurredCost');
       arr = insertAfter(arr, 'creditAvailable', 'contractValueAfterIncurred');
+      // Credit Used lands immediately after Credit Available so existing
+      // users see the new per-row figure that mirrors the summary box's
+      // Contract Credit Used total without using the Columns picker.
+      arr = insertAfter(arr, 'creditUsed', 'creditAvailable');
       arr = insertAfter(arr, 'qaCheck', 'teamCost');
       // Strip any descope columns previously persisted in the saved
       // order — these are now gated behind the "Show Descope"
@@ -8695,15 +8810,14 @@ function applyVariationsNewOverrides(cols, viewKey) {
 }
 
 // Scope Changes (variations) view label overrides. The "Total
-// Cost" column is relabeled to make explicit that it's the
-// contract value BEFORE incurred cost is applied — distinguishing
-// it from the adjacent "Total Contract Value (Incurred cost
-// subtracted)" column. View-specific so the Sites List keeps the
-// concise "Total Cost" label.
+// Cost" column is relabeled as the contract value of the visible
+// row — pairs with the adjacent "Initial Credit Available" column
+// (Total Cost − Incurred Cost). View-specific so the Sites List
+// keeps the concise "Total Cost" label.
 function applyVariationsScopeOverrides(cols, viewKey) {
   if (viewKey !== 'variations') return cols;
   const overrides = {
-    cost: { label: 'Total Contract Value (before applying Incurred Cost)' },
+    cost: { label: 'Total Contract Value' },
   };
   return cols.map(c => overrides[c.key] ? { ...c, ...overrides[c.key] } : c);
 }
@@ -10884,22 +10998,80 @@ function renderListSectionHtml(viewKey, opts = {}) {
   // updates the totals naturally.
   let totalsRowHtml = '';
   if (view.showTotalsRow) {
-    // BY→OY1 rollforward nets to zero across the TOTALS row:
-    // BY's Incurred displays decrease by R, OY1's Incurred
-    // displays increase by R — the cross-year sum is unchanged
-    // (raw site Incurred values are summed). Total Cost is NOT
-    // affected by the rollforward (OY1's contract scope is
-    // unchanged; only its books carry the rolled incurred).
-    // Credit Available = Total − Incurred → also unchanged.
-    // So the main TOTALS row needs no rollforward-specific
-    // adjustments; raw sums are correct.
+    // BY→OY1 rollforward nets to zero for most columns at the TOTALS
+    // row: BY's Incurred displays decrease by R, OY1's Incurred
+    // displays increase by R — the cross-year sum is unchanged (raw
+    // site Incurred values are summed). Total Cost is unaffected by
+    // the rollforward, and Credit Available = Total − Incurred is
+    // also unchanged.
+    //
+    // EXCEPTIONS, both keeping the TOTALS row in agreement with the
+    // summary box at the top of the view:
+    //   - Credit Used: per-row column uses raw incurred for green
+    //     rows, but the summary's Contract Credit Used subtracts the
+    //     BY rollforward. Apply the same subtraction here.
+    //   - Initial Credit Available: per-row sortGet returns null for
+    //     incurred-only clones (cost is null), so the per-row sum
+    //     skips their −incurred contribution. The summary uses
+    //     bucket-level math (b.total − b.incurred) which DOES net
+    //     them out. Subtract the clones' incurred at TOTALS to align.
+    //   - Credit Available: per-row column is cost − incurred, which
+    //     doesn't subtract descoped sites' contract value. The
+    //     summary's Total Available Credit is Total − Descope −
+    //     Incurred, so the descope amount has to come out at the
+    //     TOTALS level too.
+    const totalsByRollforward = viewKey === 'variations'
+      ? computeBaseYearRollforward(filteredSites)
+      : 0;
+    const totalsDescope = viewKey === 'variations'
+      ? filteredSites.reduce(
+          (acc, s) => acc + (siteIsCompletelyDescoped(s) ? (Number(s.cost) || 0) : 0),
+          0
+        )
+      : 0;
     let labelPlaced = false;
     const totalsCells = visibleCols.map(c => {
       if (c.summable) {
-        const sum = filteredSites.reduce((acc, s) => {
+        let sum = filteredSites.reduce((acc, s) => {
           const v = (c.sortGet || c.get)(s);
           return acc + (Number.isFinite(Number(v)) ? Number(v) : 0);
         }, 0);
+        if (totalsByRollforward > 0 && c.key === 'creditUsed') {
+          sum -= totalsByRollforward;
+        }
+        if (viewKey === 'variations' && c.key === 'contractValueAfterIncurred') {
+          let cloneIncurred = 0;
+          for (const s of filteredSites) {
+            if (s.cost == null) cloneIncurred += Number(s.incurredCost) || 0;
+          }
+          sum -= cloneIncurred;
+        }
+        if (totalsDescope > 0 && c.key === 'creditAvailable') {
+          sum -= totalsDescope;
+        }
+        // Per-company Original Subcontract Amount columns on Scope
+        // Changes: the column sum includes BY descopes (real money
+        // already off the books) plus non-BY scope-change exposure.
+        // Show the non-BY exposure as the headline total and call out
+        // the BY portion on a sub-line so the figure matches what's
+        // still in play. data-cell-num isolates the headline number
+        // for the cell-sum tooltip.
+        if (viewKey === 'variations' &&
+            (c.key === 'descopePika' || c.key === 'descopeTT' || c.key === 'descopeBattelle')) {
+          const coKey = c.key === 'descopePika' ? 'pika'
+                      : c.key === 'descopeTT'   ? 'tt'   : 'battelle';
+          let byPart = 0;
+          for (const s of filteredSites) {
+            const y = siteYearForGrouping(s).toLowerCase();
+            if (y === 'base year') byPart += computeDescopePerCompany(s)[coKey] || 0;
+          }
+          const nonBy = sum - byPart;
+          const headline = fmtMoney2dp(nonBy);
+          const note = byPart > 0
+            ? `<div class="sl-totals-sub-note">BY Descope of ${escapeHtml(fmtMoney2dp(byPart))}</div>`
+            : '';
+          return `<td class="${c.cls}" data-cell-num="${escapeAttr(headline)}">${escapeHtml(headline)}${note}</td>`;
+        }
         return `<td class="${c.cls}">${escapeHtml(fmtMoney2dp(sum))}</td>`;
       }
       if (!labelPlaced) {
@@ -11163,6 +11335,26 @@ function renderListSectionHtml(viewKey, opts = {}) {
               // by R (so $0 once rolled). Credit Available reads
               // as −R to surface the rollforward "owed" from BY
               // to OY1.
+              sum -= byRollforward;
+            } else if (isOY1Group && c.key === 'contractValueAfterIncurred') {
+              // Initial Credit Available mirrors Credit Available
+              // at OY1: the rollforward inflates OY1's effective
+              // Incurred, so the contract-value-minus-incurred read
+              // shown by Initial Credit Available should also drop
+              // by R.
+              sum -= byRollforward;
+            } else if (isBaseYearGroup && c.key === 'contractValueAfterIncurred') {
+              // BY mirror: same −R surfacing the rollforward owed
+              // forward to OY1. With BY exclusion the sum starts
+              // at $0, so this lands at −R.
+              sum -= byRollforward;
+            } else if (isOY1Group && c.key === 'creditUsed') {
+              // OY1's per-row Credit Used uses raw incurred, but
+              // the displayed Incurred at this subtotal is raw +
+              // rollforward. Subtract the rollforward at the
+              // subtotal level too so Credit Used agrees with the
+              // rollforward-adjusted picture, matching what the
+              // summary box does at the RD level.
               sum -= byRollforward;
             }
           }
@@ -11499,8 +11691,8 @@ function renderListSectionHtml(viewKey, opts = {}) {
 
           <div style="font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute); margin: 4px 0 4px;">Net Adjustment — per-company net position on the site</div>
           <div style="background:rgba(255,255,255,0.45); border-radius:4px; padding:6px 10px; margin-bottom:10px; font-size:12px; color:var(--ink);">
-            <span class="mono">Net Adjustment = Original Subcontract Amount + Retains or Additions</span><br>
-            <span style="color:var(--ink-mute);">Signed sum of the two adjacent visible columns. Original Subcontract is negative (potential descope); Retains or Additions is positive (work performed). Computed independently for PIKA, TT, and Battelle. <strong>Negative</strong> = the company has a net loss on this site (gives back more than it keeps); <strong>positive</strong> = net gain.</span>
+            <span class="mono">Net Adjustment = Retains or Additions − Original Subcontract Amount</span><br>
+            <span style="color:var(--ink-mute);">Signed difference of the two adjacent visible columns (both displayed as positive). Computed independently for PIKA, TT, and Battelle. <strong>Negative</strong> = the company has a net loss on this site (gives back more than it keeps); <strong>positive</strong> = net gain.</span>
           </div>
 
           <div style="border-top:1px solid rgba(0,0,0,0.08); padding-top:8px; color:var(--ink); font-size:11.5px;">
@@ -11523,9 +11715,15 @@ function renderListSectionHtml(viewKey, opts = {}) {
   //     by the "completely descoped" rule (Base Year + no PSC + no
   //     Final IHA Report Approved). Financial-QA-fail red rows are
   //     NOT included — they're a data integrity signal, not a descope.
-  //   - Credit Used:          sum of Total Cost across rows tinted
-  //     green by the highlight window (PSC or Final Report approved
-  //     in window). Zero when no highlight window is set.
+  //   - Credit Used:          sum of (Total Cost − Incurred Cost)
+  //     across rows tinted green by the highlight window (PSC or
+  //     Final Report approved in window), MINUS the per-RD BY→OY1
+  //     rollforward. The rollforward subtraction corrects for the
+  //     fact that OY1's displayed Incurred is inflated by the
+  //     rollforward but green OY1 rows' contribution to Credit Used
+  //     uses raw per-row incurred — without the subtraction, the
+  //     summary would over-recognize credit by exactly the
+  //     rollforward amount. Zero when no highlight window is set.
   // Available Credit = Total Contract Value − Contract Descope.
   // Numbers respect active filters (uses filteredSites), matching the
   // table's totals and per-RD subtotals semantics.
@@ -11537,7 +11735,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
     const ensureBucket = (rd) => {
       if (!buckets[rd]) {
         buckets[rd] = {
-          total: 0, descope: 0, used: 0, incurred: 0,
+          total: 0, descope: 0, used: 0, incurred: 0, rollforward: 0,
           count: 0, descopeCount: 0, usedCount: 0,
           newTotal: 0, newIncurred: 0,
           newCompleted: 0, newProjected: 0,
@@ -11563,9 +11761,30 @@ function renderListSectionHtml(viewKey, opts = {}) {
         b.descope += cost;
         b.descopeCount++;
       }
-      if (summaryHighlightPred && summaryHighlightPred(s) === 'green') {
-        b.used += cost;
+      // BY rollforward sources (descoped BY or BY incurred-only clones)
+      // are excluded from b.used because their incurred has been moved
+      // out of BY's books into OY1's via the rollforward. Counting them
+      // here would clash with the b.rollforward subtraction below — and
+      // for green incurred-only clones specifically, would double-deduct
+      // the same dollar (once as (0 − incurred) in b.used, once as
+      // +incurred in b.rollforward).
+      const rollsForward = siteRollsForwardToOy1(s);
+      if (summaryHighlightPred && summaryHighlightPred(s) === 'green' && !rollsForward) {
+        // Contract Credit Used per row is Total Cost − Incurred Cost,
+        // not raw Total Cost. Incurred is already subtracted once from
+        // every visible row to form Initial Credit Available; counting
+        // it again here would double-deduct it from Remaining Credit.
+        b.used += cost - incurred;
         b.usedCount++;
+      }
+      // Per-RD BY→OY1 rollforward total: BY sites that are completely
+      // descoped or are incurred-only clones contribute their incurred
+      // to a pool that's added to OY1's subtotal display. Subtracted
+      // from b.used below so Remaining Credit reflects the rollforward-
+      // adjusted incurred picture, matching what the user sees in the
+      // BY/OY1 row annotations.
+      if (rollsForward) {
+        b.rollforward += incurred;
       }
     }
 
@@ -11614,7 +11833,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
       ...Object.keys(buckets).filter(rd => !RD_ORDER_LOCAL.includes(rd)),
     ];
     const grand = {
-      total: 0, descope: 0, used: 0, incurred: 0,
+      total: 0, descope: 0, used: 0, incurred: 0, rollforward: 0,
       count: 0, descopeCount: 0, usedCount: 0,
       newTotal: 0, newIncurred: 0,
       newCompleted: 0, newProjected: 0,
@@ -11626,6 +11845,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
       grand.descope += b.descope;
       grand.used += b.used;
       grand.incurred += b.incurred;
+      grand.rollforward += b.rollforward;
       grand.count += b.count;
       grand.descopeCount += b.descopeCount;
       grand.usedCount += b.usedCount;
@@ -11651,14 +11871,16 @@ function renderListSectionHtml(viewKey, opts = {}) {
         // incurred cost. Incurred is already-spent money on visits
         // that's no longer "available" for new credit consumption.
         const available = b.total - b.descope - b.incurred;
-        // Contract Credit Used is the raw green-row sum — Total
-        // Cost of sites tinted green (PSC or Final approved in the
-        // highlight window). Represents the contractual value of
-        // work recognized as completed in the period.
-        // Remaining Credit = Available − Contract Credit Used.
-        // Incurred is deducted exactly once via Available; the
-        // contract credit consumed comes out of what's left.
-        const contractCreditUsed = b.used;
+        // Contract Credit Used: net green-row sum (Total Cost −
+        // Incurred Cost per row) minus the BY→OY1 rollforward for
+        // this RD. The rollforward subtraction corrects an over-
+        // recognition that arises because the rollforward inflates
+        // OY1's displayed Incurred but green OY1 rows' per-row math
+        // still uses raw (pre-rollforward) incurred. Without the
+        // subtraction, the row-level Credit Used column would
+        // disagree with the rollforward-adjusted picture shown by
+        // the OY1 Incurred Cost subtotal.
+        const contractCreditUsed = b.used - b.rollforward;
         const remaining = available - contractCreditUsed;
         const descopeCell = b.descope > 0
           ? `<span class="mono" style="color:#c62828; font-weight:600;">${escapeHtml(fmtMoney2dp(b.descope))}</span>`
@@ -11729,26 +11951,41 @@ function renderListSectionHtml(viewKey, opts = {}) {
             </td>
             <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
               ${(() => {
-                // Total Remaining Credit = Remaining Credit (Scope
-                // Changes side: available - netUsed) minus the New
-                // Sites Remaining Cost (newTotal + newIncurred -
-                // newCompleted). Positive means credit still
-                // available after both deductions; negative means
-                // the contract is over-extended (NEW Sites
-                // commitments exceed remaining credit).
-                const newRemaining = b.newTotal + b.newIncurred - b.newCompleted;
-                const totalRem = remaining - newRemaining;
+                // Total Remaining Credit = Total Available Credit −
+                // New Sites Completed. The credit pool left after
+                // recognizing the work formally completed on NEW
+                // Sites (blue rows). Negative would mean Completed
+                // exceeds Available — surface in red as a data
+                // anomaly.
+                const totalRem = available - b.newCompleted;
                 if (totalRem < 0) {
-                  return `<span class="mono" style="color:#c62828; font-weight:700;" title="NEW Sites commitments exceed remaining credit on the Scope Changes side — contract is over-extended">${escapeHtml(fmtMoney2dp(totalRem))}</span>`;
+                  return `<span class="mono" style="color:#c62828; font-weight:700;" title="NEW Sites Completed exceeds Total Available Credit — likely a data anomaly worth investigating">${escapeHtml(fmtMoney2dp(totalRem))}</span>`;
                 }
                 return `<span class="mono" style="font-weight:700;">${escapeHtml(fmtMoney2dp(totalRem))}</span>`;
+              })()}
+            </td>
+            <td style="padding: 6px 10px; text-align:right; border-bottom: 1px solid rgba(0,0,0,0.06); border-left: 2px solid rgba(0,0,0,0.12);">
+              ${(() => {
+                // Total Credit needed to reallocate = Total Available
+                // Credit − Total New Sites Cost. Positive = surplus
+                // (Available credit exceeds what NEW Sites need, so
+                // there's slack to reallocate elsewhere). Negative =
+                // deficit (NEW Sites cost more than what's available,
+                // so additional credit needs to be brought in).
+                const reallocate = available - b.newTotal;
+                if (reallocate < 0) {
+                  return `<span class="mono" style="color:#c62828; font-weight:600;" title="NEW Sites cost exceeds Total Available Credit — additional credit needs to be reallocated INTO this contract">${escapeHtml(fmtMoney2dp(reallocate))}</span>`;
+                }
+                return `<span class="mono" style="font-weight:600;">${escapeHtml(fmtMoney2dp(reallocate))}</span>`;
               })()}
             </td>
           </tr>
         `;
       }).join('');
       const grandAvailable = grand.total - grand.descope - grand.incurred;
-      const grandContractUsed = grand.used;
+      // Grand Contract Credit Used mirrors the per-RD calc: net green-
+      // row sum minus the BY→OY1 rollforward across all RDs.
+      const grandContractUsed = grand.used - grand.rollforward;
       const grandRemaining = grandAvailable - grandContractUsed;
       const grandRemainingCell = grandRemaining < 0
         ? `<span class="mono" style="color:#c62828;" title="Contract Credit Used exceeds Available Credit — likely a data anomaly">${escapeHtml(fmtMoney2dp(grandRemaining))}</span>`
@@ -11777,12 +12014,22 @@ function renderListSectionHtml(viewKey, opts = {}) {
           })()}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700;"><span class="mono">${escapeHtml(fmtMoney2dp(grand.newProjected))}</span>${grand.newProjectedCount > 0 ? `<div style="color:var(--ink-mute); font-weight:500; font-size:10px;">${grand.newProjectedCount} new site${grand.newProjectedCount === 1 ? '' : 's'}</div>` : ''}</td>
           <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);">${(() => {
-            const gnewRemaining = grand.newTotal + grand.newIncurred - grand.newCompleted;
-            const gtotalRem = grandRemaining - gnewRemaining;
+            // Grand Total Remaining Credit = grand Total Available
+            // Credit − grand New Sites Completed.
+            const gtotalRem = grandAvailable - grand.newCompleted;
             if (gtotalRem < 0) {
-              return `<span class="mono" style="color:#c62828;" title="NEW Sites commitments exceed remaining credit on the Scope Changes side — contract is over-extended">${escapeHtml(fmtMoney2dp(gtotalRem))}</span>`;
+              return `<span class="mono" style="color:#c62828;" title="NEW Sites Completed exceeds Total Available Credit across all RDs">${escapeHtml(fmtMoney2dp(gtotalRem))}</span>`;
             }
             return `<span class="mono">${escapeHtml(fmtMoney2dp(gtotalRem))}</span>`;
+          })()}</td>
+          <td style="padding: 8px 10px; text-align:right; font-weight:700; border-left: 2px solid rgba(0,0,0,0.12);">${(() => {
+            // Grand Total Credit needed to reallocate = grand Total
+            // Available Credit − grand Total New Sites Cost.
+            const gReallocate = grandAvailable - grand.newTotal;
+            if (gReallocate < 0) {
+              return `<span class="mono" style="color:#c62828;" title="NEW Sites cost exceeds Total Available Credit across all RDs">${escapeHtml(fmtMoney2dp(gReallocate))}</span>`;
+            }
+            return `<span class="mono">${escapeHtml(fmtMoney2dp(gReallocate))}</span>`;
           })()}</td>
         </tr>
       `;
@@ -11800,7 +12047,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
               <tr style="background: rgba(0,0,0,0.03);">
                 <th style="padding: 6px 10px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">RD / MSC</th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
-                  Total Contract Value (before applying Incurred Cost)
+                  Total Contract Value
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Sum of Total Cost on visible rows</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
@@ -11808,7 +12055,7 @@ function renderListSectionHtml(viewKey, opts = {}) {
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Sum of Incurred Cost on visible rows</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
-                  Total Contract Value (Incurred cost subtracted)
+                  Initial Credit Available
                   <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Contract Value − Incurred Cost</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
@@ -11817,11 +12064,11 @@ function renderListSectionHtml(viewKey, opts = {}) {
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Total Available Credit
-                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total − Contract Descope − Incurred Cost</div>
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Initial Credit Available − Contract Descope</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Contract Credit Used
-                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Green rows (approved in window)</div>
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Green rows: Total Cost − Incurred Cost − BY→OY1 rollforward</div>
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute);">
                   Remaining Credit
@@ -11849,7 +12096,11 @@ function renderListSectionHtml(viewKey, opts = {}) {
                 </th>
                 <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute); border-left: 2px solid rgba(0,0,0,0.12);">
                   Total Remaining Credit
-                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Remaining Credit − New Site Remaining Cost</div>
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Available Credit − New Sites Completed</div>
+                </th>
+                <th style="padding: 6px 10px; text-align:right; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-mute); border-left: 2px solid rgba(0,0,0,0.12);">
+                  Total Credit needed to reallocate
+                  <div style="text-transform:none; font-weight:500; font-size:10px; letter-spacing:0; color:var(--ink-mute);">Total Available Credit − Total New Sites Cost</div>
                 </th>
               </tr>
             </thead>
@@ -11936,10 +12187,16 @@ function renderVariations() {
 // Total = Funded Field + every adjustment.
 
 const VAR_SUMMARY_STORAGE_KEY = 'iha_var_summary_inputs_v1';
+// Separate key so user-promoted defaults survive a "Reset Inputs"
+// (which clears overrides but should fall back to whatever the
+// user has saved as their default for that RD).
+const VAR_SUMMARY_USER_DEFAULTS_KEY = 'iha_var_summary_user_defaults_v1';
 
-// Default contract inputs per RD. User edits persist via
-// localStorage; defaults match the figures the user provided
-// when this view was first requested.
+// Hardcoded fallback defaults per RD. The user can override the
+// fundedField via "Save as Default" (persisted to localStorage
+// under VAR_SUMMARY_USER_DEFAULTS_KEY); the hardcoded values
+// here are the floor that "Reset" falls back to only when no
+// user default has been set for that RD.
 const VAR_SUMMARY_DEFAULTS = {
   '63rd':   { onContract: 4974786.00, fundedField: 4195260.17 },
   '81st':   { onContract: 6206786.00, fundedField: 5022180.71 },
@@ -11974,6 +12231,32 @@ function saveVarSummaryInputs(obj) {
 
 let varSummaryInputs = loadVarSummaryInputs();
 
+function loadVarSummaryUserDefaults() {
+  try {
+    const raw = localStorage.getItem(VAR_SUMMARY_USER_DEFAULTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) { return {}; }
+}
+
+function saveVarSummaryUserDefaults(obj) {
+  try {
+    localStorage.setItem(VAR_SUMMARY_USER_DEFAULTS_KEY, JSON.stringify(obj));
+  } catch (e) { /* in-memory only */ }
+}
+
+let varSummaryUserDefaults = loadVarSummaryUserDefaults();
+
+// Effective default for an RD/key: user-saved default wins over
+// the hardcoded one. Used by getVarSummaryInput as the fallback
+// when there's no live override, and by resetVarSummaryInputs.
+function getVarSummaryDefault(rd, key) {
+  const userDef = varSummaryUserDefaults[rd];
+  if (userDef && userDef[key] != null) return Number(userDef[key]) || 0;
+  return (VAR_SUMMARY_DEFAULTS[rd] || {})[key] || 0;
+}
+
 // Toggle for showing per-year breakdown sub-rows (potential
 // descope + new sites cost). In-memory only — purely a view
 // preference, no need to persist.
@@ -11984,22 +12267,34 @@ function toggleVarSummaryDetails() {
 }
 
 function getVarSummaryInput(rd, key) {
-  // Priority: user override (localStorage) > workbook "Contract
-  // Totals" tab > hardcoded VAR_SUMMARY_DEFAULTS. Workbook values
-  // pre-fill the field; the user can still edit and the entered
-  // value is compared back against the workbook source in the QA
-  // column.
+  // Live override wins, then user-saved default, then the
+  // hardcoded default. Any unknown key falls through to 0 so
+  // new editable cells don't need explicit defaults entered.
   const stored = varSummaryInputs[rd];
   if (stored && stored[key] != null) return Number(stored[key]) || 0;
-  const fromWb = contractTotalsFromWorkbook[rd];
-  if (fromWb && fromWb[key] != null) return Number(fromWb[key]) || 0;
-  return (VAR_SUMMARY_DEFAULTS[rd] || {})[key] || 0;
+  return getVarSummaryDefault(rd, key);
 }
 
 function setVarSummaryInput(rd, key, value) {
   if (!varSummaryInputs[rd]) varSummaryInputs[rd] = {};
   varSummaryInputs[rd][key] = Number(value) || 0;
   saveVarSummaryInputs(varSummaryInputs);
+  renderVariationsSummary();
+}
+
+// Promote the currently-displayed value (live override or
+// existing default) to this RD's user default. Future "Reset
+// Inputs" calls will restore to this value. The live override
+// is cleared so input === default cleanly after promotion.
+function setVarSummaryDefault(rd, key) {
+  const current = getVarSummaryInput(rd, key);
+  if (!varSummaryUserDefaults[rd]) varSummaryUserDefaults[rd] = {};
+  varSummaryUserDefaults[rd][key] = current;
+  saveVarSummaryUserDefaults(varSummaryUserDefaults);
+  if (varSummaryInputs[rd] && varSummaryInputs[rd][key] != null) {
+    delete varSummaryInputs[rd][key];
+    saveVarSummaryInputs(varSummaryInputs);
+  }
   renderVariationsSummary();
 }
 
@@ -12013,23 +12308,30 @@ function resetVarSummaryInputs() {
 // Computed adjustments per RD, sourced from allSites.
 // Returns an object with one entry per year (by / oy1 / oy2 /
 // oy3 / oy4), each of which has:
-//   { descope, newSites, total: { total, pika, tt, battelle } }
-// where descope and newSites each have the same shape (total +
-// per-company). total = descope + newSites — that's the displayed
-// "adjustment" for that year. Descopes are negative, new sites
-// positive, total signed.
+//   { descope, newSites, incurred, byIncurred, total: { total, pika, tt, battelle } }
+// All sub-buckets have the same shape (total + per-company).
+// total = descope + newSites + incurred + byIncurred — that's the
+// displayed "adjustment" for that year. Descopes are negative,
+// new sites positive, incurred positive (cost already spent on
+// those same sites — partially offsets the descope). byIncurred
+// is the BY→OY1 incurred rollforward and is non-zero only on OY1.
 //
 // Per-year accounting reasoning: the contract adjustment for an
 // option year covers both directions — sites being descoped
 // (potential reduction) and NEW sites added to that year's
 // contract (addition). The combined figure is what gets booked
-// against the OY contract.
+// against the OY contract. Real-spent incurred on BY sites that
+// got descoped (or are surfaced as incurred-only clones in the
+// Variations tab) rolls into OY1's pool — that's the same logic
+// computeBaseYearRollforward applies to the Variations subtotals.
 function computeVarSummaryAdjustments(rd) {
   const empty = () => ({ total: 0, pika: 0, tt: 0, battelle: 0 });
   const emptyYear = () => ({
-    descope:  empty(),
-    newSites: empty(),
-    total:    empty(),
+    descope:    empty(),
+    newSites:   empty(),
+    incurred:   empty(),
+    byIncurred: empty(),
+    total:      empty(),
   });
   const rows = {
     by:  emptyYear(),
@@ -12045,6 +12347,21 @@ function computeVarSummaryAdjustments(rd) {
     subrow.pika     += sign * split.pika;
     subrow.tt       += sign * split.tt;
     subrow.battelle += sign * split.battelle;
+  };
+  const accumulateIncurred = (subrow, s) => {
+    const incurred = Number(s.incurredCost) || 0;
+    if (incurred === 0) return;
+    const split = computeIncurredPerCompany(s);
+    subrow.total    += incurred;
+    subrow.pika     += split.pika;
+    subrow.tt       += split.tt;
+    subrow.battelle += split.battelle;
+  };
+  const addBucket = (dest, src) => {
+    dest.total    += src.total;
+    dest.pika     += src.pika;
+    dest.tt       += src.tt;
+    dest.battelle += src.battelle;
   };
   const yearKey = (yr) => {
     if (yr === 'Base Year')     return 'by';
@@ -12065,33 +12382,52 @@ function computeVarSummaryAdjustments(rd) {
     if (isNew) {
       // NEW site — positive contribution to its year bucket.
       accumulate(rows[yk].newSites, +1, s);
+      // Incurred cost on this new site rolls into the year's
+      // incurred bucket — money already booked against the
+      // contract for this site.
+      accumulateIncurred(rows[yk].incurred, s);
     } else {
-      // Existing scope-flagged sites contribute to descopes,
-      // subject to the same exclusion logic the Scope Changes
-      // table applies (confirmed-scheduled or blank Dates
-      // Confirmed sites are not actively reducing the contract).
       const hasScopeFlag = !!(s.scopeVar && String(s.scopeVar).trim());
       if (!hasScopeFlag) continue;
       const excluded = siteIsConfirmedScheduled(s)
         || String(s.datesConfirmed || '').trim() === '';
-      if (excluded) continue;
+      if (excluded) {
+        // Excluded from descope, but if money has been spent the
+        // Variations tab surfaces this as an incurred-only clone.
+        // Include the incurred so the Summary's Incurred Cost
+        // row matches the Variations year subtotal.
+        if (siteHasIncurredCost(s)) accumulateIncurred(rows[yk].incurred, s);
+        continue;
+      }
       // Credit-funded BY sites: cost was satisfied by an
       // existing credit balance, not a fresh descope. Skip
       // them so the BY de-scope sum reflects only sites that
-      // are genuinely reducing the contract. Applied per-year
-      // but in practice only BY sites carry "Funded with
-      // Credit" — OY1-4 don't typically have this state.
-      if (siteFundedWithCredit(s)) continue;
+      // are genuinely reducing the contract. Only applies to
+      // BY — OY1-4 credit-funded sites still reduce contract.
+      if (yk === 'by' && siteFundedWithCredit(s)) continue;
       accumulate(rows[yk].descope, -1, s);
+      // Descoped sites with already-incurred cost: the descope
+      // gives back the unspent portion, but the incurred piece
+      // is a real expense that partially offsets the descope.
+      accumulateIncurred(rows[yk].incurred, s);
     }
   }
-  // Roll up descope + newSites into the year's total adjustment.
+  // BY→OY1 rollforward: every dollar of BY incurred cost (from
+  // descoped BY sites or BY incurred-only clones) is money the
+  // OY1 contract pool absorbs. Move the whole BY.incurred bucket
+  // into OY1.byIncurred so the Summary mirrors the Variations
+  // subtotal treatment. After this move, BY.incurred is empty.
+  addBucket(rows.oy1.byIncurred, rows.by.incurred);
+  rows.by.incurred = empty();
+  // Roll up descope + newSites + incurred + byIncurred into the
+  // year's total adjustment. Incurred and byIncurred are signed
+  // positive so they offset the negative descope.
   for (const yk of Object.keys(rows)) {
     const r = rows[yk];
-    r.total.total    = r.descope.total    + r.newSites.total;
-    r.total.pika     = r.descope.pika     + r.newSites.pika;
-    r.total.tt       = r.descope.tt       + r.newSites.tt;
-    r.total.battelle = r.descope.battelle + r.newSites.battelle;
+    r.total.total    = r.descope.total    + r.newSites.total    + r.incurred.total    + r.byIncurred.total;
+    r.total.pika     = r.descope.pika     + r.newSites.pika     + r.incurred.pika     + r.byIncurred.pika;
+    r.total.tt       = r.descope.tt       + r.newSites.tt       + r.incurred.tt       + r.byIncurred.tt;
+    r.total.battelle = r.descope.battelle + r.newSites.battelle + r.incurred.battelle + r.byIncurred.battelle;
   }
   return rows;
 }
@@ -12102,6 +12438,229 @@ function fmtVarSummaryMoney(v) {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
   return n < 0 ? `$ (${abs})` : `$ ${abs}`;
+}
+
+// Diagnostic: builds the descope-site set as the Site Variations
+// Scope Changes section sees it AND as this Summary tab sees it,
+// then surfaces the per-RD / per-year differences so the user can
+// see exactly which sites diverge. One-shot read-only view — does
+// not mutate anything.
+function computeVarSummaryDiff() {
+  const sections = [];
+  for (const rd of VAR_SUMMARY_RD_ORDER) {
+    // Variations Scope Changes — mirrors getSites in the
+    // 'variations' view definition above. Includes clones
+    // (excluded site that nonetheless has incurred cost).
+    const variationsById = new Map();
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      if (!s.scopeVar || String(s.scopeVar).length === 0) continue;
+      if (isNewSiteId(s.id)) continue;
+      const excluded = siteIsConfirmedScheduled(s)
+        || String(s.datesConfirmed || '').trim() === '';
+      if (!excluded) {
+        variationsById.set(s.id, { site: s, isClone: false });
+      } else if (siteHasIncurredCost(s)) {
+        variationsById.set(s.id, { site: s, isClone: true });
+      }
+    }
+    // Summary descope set — mirrors computeVarSummaryAdjustments
+    // descope branch.
+    const summaryById = new Map();
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      const cost = Number(s.cost) || 0;
+      if (cost === 0) continue;
+      if (isNewSiteId(s.id)) continue;
+      const hasScopeFlag = !!(s.scopeVar && String(s.scopeVar).trim());
+      if (!hasScopeFlag) continue;
+      const excluded = siteIsConfirmedScheduled(s)
+        || String(s.datesConfirmed || '').trim() === '';
+      if (excluded) continue;
+      const yr = siteYearForGrouping(s);
+      const isByYear = yr === 'Base Year';
+      if (isByYear && siteFundedWithCredit(s)) continue;
+      summaryById.set(s.id, { site: s });
+    }
+
+    const allIds = new Set([...variationsById.keys(), ...summaryById.keys()]);
+    const rows = [];
+    for (const id of allIds) {
+      const inV = variationsById.has(id);
+      const inS = summaryById.has(id);
+      const site = (variationsById.get(id) || summaryById.get(id)).site;
+      const split = computeDescopePerCompany(site);
+      const origCost = Number(site.cost) || 0;
+      const isClone = inV ? variationsById.get(id).isClone : false;
+      // Clones render in the Variations tab with Total Cost
+      // nulled out (em-dash), so they contribute $0 to the
+      // per-year subtotal that this diff is reconciling. Mirror
+      // that here so Variations Total matches the on-screen
+      // figure rather than the underlying original cost.
+      const cost = isClone ? 0 : origCost;
+      const pika = isClone ? 0 : split.pika;
+      const tt = isClone ? 0 : split.tt;
+      const battelle = isClone ? 0 : split.battelle;
+      // Reasons each side excluded (when one side did).
+      let excludedReason = '';
+      if (inV && !inS) {
+        // Variations included; Summary excluded — why?
+        if (siteFundedWithCredit(site) && siteYearForGrouping(site) === 'Base Year') excludedReason = 'Summary excludes: credit-funded BY';
+        else if (origCost === 0) excludedReason = 'Summary excludes: Total Cost = 0';
+        else if (isClone) excludedReason = 'Variations clone (cost null) — Summary requires cost > 0';
+        else excludedReason = 'Unknown — investigate';
+      } else if (inS && !inV) {
+        const excludedFromV = siteIsConfirmedScheduled(site)
+          || String(site.datesConfirmed || '').trim() === '';
+        if (excludedFromV) excludedReason = 'Variations excludes: confirmed-scheduled or blank Dates Confirmed';
+        else excludedReason = 'Unknown — investigate';
+      }
+      rows.push({
+        id,
+        year: siteYearForGrouping(site) || '(none)',
+        name: site.name || site.siteName || '',
+        cost,
+        pika,
+        tt,
+        battelle,
+        inV, inS, isClone, excludedReason,
+        creditFunded: siteFundedWithCredit(site),
+      });
+    }
+    // Sort: differences first (V-only then S-only), then both,
+    // each group sorted by year then id.
+    const yearRank = y => ({ 'Base Year': 0, 'Option Year 1': 1, 'Option Year 2': 2, 'Option Year 3': 3, 'Option Year 4': 4 })[y] ?? 99;
+    rows.sort((a, b) => {
+      const aState = a.inV && a.inS ? 2 : (a.inV ? 0 : 1);
+      const bState = b.inV && b.inS ? 2 : (b.inV ? 0 : 1);
+      if (aState !== bState) return aState - bState;
+      if (yearRank(a.year) !== yearRank(b.year)) return yearRank(a.year) - yearRank(b.year);
+      return String(a.id).localeCompare(String(b.id));
+    });
+    const onlyV = rows.filter(r => r.inV && !r.inS);
+    const onlyS = rows.filter(r => !r.inV && r.inS);
+    const both  = rows.filter(r => r.inV && r.inS);
+    // Per-year totals on each side so the user sees the
+    // aggregate gap, not just the row list.
+    const sumYears = (set) => {
+      const out = {};
+      const years = ['Base Year', 'Option Year 1', 'Option Year 2', 'Option Year 3', 'Option Year 4'];
+      for (const y of years) out[y] = { total: 0, pika: 0, tt: 0, battelle: 0 };
+      for (const r of rows) {
+        if (!set(r)) continue;
+        const bucket = out[r.year];
+        if (!bucket) continue;
+        bucket.total    += r.cost;
+        bucket.pika     += r.pika;
+        bucket.tt       += r.tt;
+        bucket.battelle += r.battelle;
+      }
+      return out;
+    };
+    const totalsV = sumYears(r => r.inV);
+    const totalsS = sumYears(r => r.inS);
+    sections.push({ rd, rows, onlyV, onlyS, both, totalsV, totalsS });
+  }
+  return sections;
+}
+
+function showVariationsSummaryDiff() {
+  if (!allSites || allSites.length === 0) return;
+  const sections = computeVarSummaryDiff();
+  const fmt = (n) => fmtVarSummaryMoney(Number(n) || 0);
+  const yearOrder = ['Base Year', 'Option Year 1', 'Option Year 2', 'Option Year 3', 'Option Year 4'];
+
+  const sectionsHtml = sections.map(sec => {
+    const totalsTable = `
+      <table style="width:100%; border-collapse:collapse; font-size:12px; font-family:'IBM Plex Mono',monospace; margin:8px 0 12px;">
+        <thead>
+          <tr style="background:rgba(0,0,0,0.06);">
+            <th style="text-align:left; padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">Year</th>
+            <th style="text-align:right; padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">Variations Total</th>
+            <th style="text-align:right; padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">Summary Total</th>
+            <th style="text-align:right; padding:4px 8px; border:1px solid rgba(0,0,0,0.1); color:#c62828;">Diff (V − S)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${yearOrder.map(y => {
+            const v = sec.totalsV[y].total;
+            const s = sec.totalsS[y].total;
+            const d = v - s;
+            if (v === 0 && s === 0) return '';
+            const diffCol = Math.abs(d) > 0.005 ? '#c62828' : 'var(--ink-mute)';
+            return `<tr>
+              <td style="padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(y)}</td>
+              <td style="padding:4px 8px; text-align:right; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(fmt(v))}</td>
+              <td style="padding:4px 8px; text-align:right; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(fmt(s))}</td>
+              <td style="padding:4px 8px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:${diffCol}; font-weight:600;">${escapeHtml(fmt(d))}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+    const rowList = (rows, title, emptyMsg) => {
+      if (rows.length === 0) {
+        return `<div style="font-size:12px; color:var(--ink-mute); margin:6px 0 12px; font-style:italic;">${title}: ${emptyMsg}</div>`;
+      }
+      return `
+        <div style="margin:6px 0 4px; font-weight:700; font-size:12px;">${title} (${rows.length})</div>
+        <table style="width:100%; border-collapse:collapse; font-size:11px; font-family:'IBM Plex Mono',monospace; margin-bottom:12px;">
+          <thead>
+            <tr style="background:rgba(0,0,0,0.06);">
+              <th style="text-align:left; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Site ID</th>
+              <th style="text-align:left; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Year</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Cost</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1); color:#1d4ed8;">PIKA</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1); color:#b91c1c;">TT</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1); color:#6b21a8;">Battelle</th>
+              <th style="text-align:left; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td style="padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(r.id)}${r.isClone ? ' <span style="color:var(--ink-mute);">(clone)</span>' : ''}</td>
+              <td style="padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(r.year)}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(fmt(r.cost))}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:#1d4ed8;">${escapeHtml(fmt(r.pika))}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:#b91c1c;">${escapeHtml(fmt(r.tt))}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:#6b21a8;">${escapeHtml(fmt(r.battelle))}</td>
+              <td style="padding:3px 6px; border:1px solid rgba(0,0,0,0.1); font-family:'IBM Plex Sans',sans-serif; font-size:11px;">${escapeHtml(r.excludedReason || '')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      `;
+    };
+
+    return `
+      <div style="margin-bottom:18px; padding:12px 14px; background:#f9f9f9; border:1px solid rgba(0,0,0,0.12); border-radius:6px;">
+        <h3 style="margin:0 0 6px; font-family:'DM Serif Display',serif; font-size:18px;">${escapeHtml(sec.rd)} RD</h3>
+        ${totalsTable}
+        ${rowList(sec.onlyV, 'Only in Variations Scope Changes', 'none — Variations and Summary agree on inclusion')}
+        ${rowList(sec.onlyS, 'Only in Variations Summary',       'none — Variations and Summary agree on inclusion')}
+      </div>
+    `;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'var-diff-overlay';
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  overlay.innerHTML = `
+    <div class="var-diff-modal" onclick="event.stopPropagation()">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px;">
+        <div>
+          <h2 style="margin:0; font-family:'DM Serif Display',serif;">Variations ↔ Summary diff</h2>
+          <div style="font-size:12px; color:var(--ink-mute); margin-top:2px;">
+            Per-RD comparison of the descope site set as used by the Site Variations Scope Changes table (V) vs the Site Variations Summary tab (S). Sites listed only in one side explain the totals gap. Reason column shows which filter excludes each.
+          </div>
+        </div>
+        <button class="nav-btn" onclick="this.closest('.var-diff-overlay').remove()" style="white-space:nowrap;">✕ Close</button>
+      </div>
+      ${sectionsHtml}
+    </div>
+  `;
+  document.body.appendChild(overlay);
 }
 
 function renderVariationsSummary() {
@@ -12117,23 +12676,76 @@ function renderVariationsSummary() {
     fundedField: 0,
     postAdjustments: 0,
     netAdjPika: 0, netAdjTT: 0, netAdjBattelle: 0,
+    // BY de-scope is netted out of the per-RD Total and the grand
+    // Post Adjustments / Net Adjustment cells, then surfaced as a
+    // sub-note so the excluded amount stays visible. Mirrors v22
+    // on the Site Variations tab. byPart values are signed the
+    // same way computeDescopePerCompany feeds them — descope is
+    // negative; any rare BY new-site contribution is positive.
+    byPart: { total: 0, pika: 0, tt: 0, battelle: 0 },
+  };
+
+  // Renders the sub-line text under a Total cell. Always labels
+  // BY de-scope (the overwhelmingly common case); flips to
+  // "BY Addition" only if the BY net is positive. Hidden when
+  // the BY portion is effectively zero.
+  const bySubNote = (v, color) => {
+    const n = Number(v) || 0;
+    if (Math.abs(n) < 0.005) return '';
+    const word = n < 0 ? 'De-scope' : 'Addition';
+    const c = color || 'var(--ink-mute)';
+    return `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; opacity:0.78; white-space:nowrap; color:${c};">BY ${word} of ${fmtVarSummaryMoney(Math.abs(n))}</div>`;
   };
 
   const rdSectionsHtml = VAR_SUMMARY_RD_ORDER.map(rd => {
     const onContract  = getVarSummaryInput(rd, 'onContract');
-    const fundedField = getVarSummaryInput(rd, 'fundedField');
     const adj = computeVarSummaryAdjustments(rd);
-    // Total = Funded Field + sum of per-year adjustments (each
-    // year's adjustment already nets descope + new sites).
-    const total = fundedField + adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
-    // Per-company sums of all per-year adjustments. Used for the
+    // Funded per-company cost: raw CIH / Lead IH / Add Cost /
+    // Team Cost columns from every site on the contract books —
+    // Total Cost > 0 and NOT a NEW site (additions that aren't
+    // formally on the contract yet). Mapped to companies the
+    // same way the per-RD WIP rollup does (PIKA gets CIH + Add
+    // Cost; Lead IH bucket goes to TT for 63rd/81st and Battelle
+    // for 99th/9th MSC; Team Cost routes by each site's Team
+    // field). Drives the per-company columns of the On Contract
+    // row.
+    const leadIhCo = (rd === '99th' || rd === '9th MSC') ? 'battelle' : 'tt';
+    const fundedPerCo = { pika: 0, tt: 0, battelle: 0 };
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      if ((Number(s.cost) || 0) <= 0) continue;
+      if (isNewSiteId(s.id)) continue;
+      const cih      = Number(s.cih)      || 0;
+      const leadIh   = Number(s.leadIH)   || 0;
+      const addCost  = Number(s.addCost)  || 0;
+      const teamCost = Number(s.teamCost) || 0;
+      const team     = s.team || '';
+      fundedPerCo.pika      += cih + addCost;
+      fundedPerCo[leadIhCo] += leadIh;
+      if      (team === 'PIKA')     fundedPerCo.pika     += teamCost;
+      else if (team === 'TT')       fundedPerCo.tt       += teamCost;
+      else if (team === 'Battelle') fundedPerCo.battelle += teamCost;
+    }
+    // Per-RD Total / per-company Net Adjustments now EXCLUDE the
+    // BY year. BY de-scope is "official" contract money already
+    // off the books — pulling it out leaves the live, still-in-
+    // play working figure as the headline value. The BY portion
+    // appears as a sub-note on each cell. Mirrors the v22 TOTALS
+    // row on the Site Variations tab.
+    // Per-RD Total / per-company Net Adjustments include ALL
+    // years (BY + OY1-4) on top of the RD On-Contract base.
+    // The RD On-Contract value plays the role of the former
+    // "Funded Field w/ Per Diem..." input (the verbiage is now
+    // a sub-comment on the RD On-Contract row label).
+    const total = onContract + adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
+    // Per-company sums of ALL years' adjustments. Used for the
     // per-company Total cells + bottom rollup.
     const netAdjPika     = adj.by.total.pika     + adj.oy1.total.pika     + adj.oy2.total.pika     + adj.oy3.total.pika     + adj.oy4.total.pika;
     const netAdjTT       = adj.by.total.tt       + adj.oy1.total.tt       + adj.oy2.total.tt       + adj.oy3.total.tt       + adj.oy4.total.tt;
     const netAdjBattelle = adj.by.total.battelle + adj.oy1.total.battelle + adj.oy2.total.battelle + adj.oy3.total.battelle + adj.oy4.total.battelle;
 
     grandTotals.fullContract     += onContract;
-    grandTotals.fundedField      += fundedField;
+    grandTotals.fundedField      += onContract;
     grandTotals.postAdjustments  += total;
     grandTotals.netAdjPika       += netAdjPika;
     grandTotals.netAdjTT         += netAdjTT;
@@ -12200,7 +12812,7 @@ function renderVariationsSummary() {
         <td style="${subValPika}">${fmtVarSummaryMoney(sub.pika)}</td>
         <td style="${subValTT}">${fmtVarSummaryMoney(sub.tt)}</td>
         <td style="${subValBat}">${fmtVarSummaryMoney(sub.battelle)}</td>
-        <td style="${subValBase} text-align:center;"></td>
+        <td style="${subValBase} text-align:center;">${qaCheck(sub.total, sub.pika, sub.tt, sub.battelle)}</td>
       </tr>`;
     };
     const rowAdjWithDetails = (label, yearObj) => {
@@ -12217,14 +12829,57 @@ function renderVariationsSummary() {
         <td style="${valStyle} text-align:center;">${qaCheck(yearObj.total.total, yearObj.total.pika, yearObj.total.tt, yearObj.total.battelle)}</td>
       </tr>`;
       // Figure out which sub-row is "last visible" so the bottom
-      // border lands on the right one.
-      const descopeZero = yearObj.descope.total === 0 && yearObj.descope.pika === 0 && yearObj.descope.tt === 0 && yearObj.descope.battelle === 0;
-      const newSitesZero = yearObj.newSites.total === 0 && yearObj.newSites.pika === 0 && yearObj.newSites.tt === 0 && yearObj.newSites.battelle === 0;
-      const newSitesIsLast = !newSitesZero;
-      const descopeIsLast  = !descopeZero && newSitesZero;
+      // border lands on the right one. Order is Descope →
+      // Incurred → New Sites → BY Incurred. BY Incurred wins
+      // last when present (only OY1 normally has it).
+      const isSubZero = sub => sub.total === 0 && sub.pika === 0 && sub.tt === 0 && sub.battelle === 0;
+      const descopeZero    = isSubZero(yearObj.descope);
+      const incurredZero   = isSubZero(yearObj.incurred);
+      const newSitesZero   = isSubZero(yearObj.newSites);
+      const byIncurredZero = isSubZero(yearObj.byIncurred);
+      const byIncurredIsLast = !byIncurredZero;
+      const newSitesIsLast   = !newSitesZero && byIncurredZero;
+      const incurredIsLast   = !incurredZero && newSitesZero && byIncurredZero;
+      const descopeIsLast    = !descopeZero && incurredZero && newSitesZero && byIncurredZero;
       return parent
-        + rowSub('Potential Descope', yearObj.descope, descopeIsLast)
-        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast);
+        + rowSub('Potential Descope', yearObj.descope,    descopeIsLast)
+        + rowSub('Incurred Cost',     yearObj.incurred,   incurredIsLast)
+        + rowSub('New Sites Cost',    yearObj.newSites,   newSitesIsLast)
+        + rowSub('BY Incurred Cost',  yearObj.byIncurred, byIncurredIsLast);
+    };
+    const saveDefBtnStyle = "margin-left:6px; padding:2px 8px; font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; border:1px solid var(--line); background:#fff; color:var(--ink-mute); border-radius:3px; cursor:pointer; vertical-align:middle;";
+    const rowInput = (label, value, key) => {
+      // Mark when the current value matches the user-saved
+      // default so the "Save as Default" button can dim — there's
+      // nothing to save and the button text shifts to "Saved" to
+      // make the state obvious.
+      const userDef = (varSummaryUserDefaults[rd] || {})[key];
+      const hasUserDef = userDef != null;
+      const matchesUserDef = hasUserDef && Math.abs(Number(userDef) - value) < 0.005;
+      const btnLabel = matchesUserDef ? '✓ Saved' : 'Save as Default';
+      const btnTitle = matchesUserDef
+        ? `Current value matches saved default ($${Number(userDef).toFixed(2)})`
+        : (hasUserDef
+            ? `Save current value as default (current saved: $${Number(userDef).toFixed(2)})`
+            : 'Save current value as this RD\'s default — Reset will restore to it');
+      const btnExtra = matchesUserDef ? 'opacity:0.55; cursor:default;' : '';
+      return `<tr style="${rowBorderStyle}">
+        <td style="${labelStyle}">${label}</td>
+        <td style="${valStyle}">
+          <input type="number" step="0.01"
+            value="${value.toFixed(2)}"
+            onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
+            style="${inputStyle}">
+          <button type="button"
+            onclick="setVarSummaryDefault('${escapeAttr(rd)}', '${key}')"
+            style="${saveDefBtnStyle}${btnExtra}"
+            title="${escapeAttr(btnTitle)}">${btnLabel}</button>
+        </td>
+        <td style="${dashStyle}">—</td>
+        <td style="${dashStyle}">—</td>
+        <td style="${dashStyle}">—</td>
+        <td style="${valStyle} text-align:center;">${qaNone}</td>
+      </tr>`;
     };
     // Editable contract-input row. The QA cell compares the
     // entered value against the workbook's "Contract Totals" tab
@@ -12259,6 +12914,94 @@ function renderVariationsSummary() {
     const headerStyle = "padding:8px 12px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); border-bottom:2px solid #888; text-align:right; background:rgba(0,0,0,0.04);";
     const headerStyleCenter = headerStyle.replace('text-align:right','text-align:center');
 
+    // Fixed-value display row used for On Contract — Total
+    // comes from the CLINS-derived defaults (CLINS task order
+    // total minus $25K reconciliation), not editable. Optional
+    // perCo argument populates the company columns with the
+    // funded-sites raw cost split; passed as null to keep them
+    // as em-dashes. Sum of per-company values won't necessarily
+    // match the CLINS Total (CLINS includes overhead/fees beyond
+    // the per-site work breakdown), so QA stays em-dash.
+    const rowFixed = (label, value, perCo) => {
+      const hasPerCo = !!perCo;
+      return `<tr style="${rowBorderStyle}">
+        <td style="${labelStyle}">${label}</td>
+        <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(value)}</td>
+        <td style="${hasPerCo ? valStylePika    : dashStyle}">${hasPerCo ? fmtVarSummaryMoney(perCo.pika)     : '—'}</td>
+        <td style="${hasPerCo ? valStyleTT      : dashStyle}">${hasPerCo ? fmtVarSummaryMoney(perCo.tt)       : '—'}</td>
+        <td style="${hasPerCo ? valStyleBattelle: dashStyle}">${hasPerCo ? fmtVarSummaryMoney(perCo.battelle) : '—'}</td>
+        <td style="${valStyle} text-align:center;">${qaNone}</td>
+      </tr>`;
+    };
+
+    // Compact editable money cell — narrow input + tiny ★ save-
+    // as-default button. Used by the On Contract / Labor On-
+    // Contract rows where multiple columns are individually
+    // editable and the wider "Save as Default" button style
+    // would not fit. Button flips to ✓ and dims when the
+    // displayed value matches the saved user default for the key.
+    const editCell = (key, value, color) => {
+      const userDef = (varSummaryUserDefaults[rd] || {})[key];
+      const hasUserDef = userDef != null;
+      const matchesUserDef = hasUserDef && Math.abs(Number(userDef) - value) < 0.005;
+      const btnLabel = matchesUserDef ? '✓' : '★';
+      const btnTitle = matchesUserDef
+        ? `Saved as default ($${Number(userDef).toFixed(2)})`
+        : (hasUserDef
+            ? `Save as default (current saved: $${Number(userDef).toFixed(2)})`
+            : 'Save current value as this RD\'s default');
+      const btnColor = matchesUserDef ? '#2e7d32' : 'var(--ink-mute)';
+      const btnExtra = matchesUserDef ? 'opacity:0.6; cursor:default;' : '';
+      const inStyle = `width:110px; padding:3px 6px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; border:1px solid var(--line); background:#fff; color:${color}; font-weight:700;`;
+      const btnStyle = `margin-left:4px; padding:1px 5px; font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; border:1px solid var(--line); background:#fff; border-radius:3px; cursor:pointer; vertical-align:middle; color:${btnColor}; ${btnExtra}`;
+      return `<td style="padding:5px 8px; text-align:right; white-space:nowrap;">
+        <input type="number" step="0.01"
+          value="${value.toFixed(2)}"
+          onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
+          style="${inStyle}">
+        <button type="button"
+          onclick="setVarSummaryDefault('${escapeAttr(rd)}', '${key}')"
+          style="${btnStyle}"
+          title="${escapeAttr(btnTitle)}">${btnLabel}</button>
+      </td>`;
+    };
+
+    // Labor On-Contract row: PIKA is editable, TT and Battelle
+    // are calculated from the funded-sites raw cost split (the
+    // values that used to populate the On Contract row before
+    // this row existed). TOTAL auto-sums the three so the QA
+    // check always passes by construction.
+    const laborPika = getVarSummaryInput(rd, 'laborPika');
+    const laborTT = fundedPerCo.tt;
+    const laborBattelle = fundedPerCo.battelle;
+    const laborTotal = laborPika + laborTT + laborBattelle;
+    const rowLaborOnContract = `<tr style="${rowBorderStyle}">
+      <td style="${labelStyle}">Labor On-Contract</td>
+      <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(laborTotal)}</td>
+      ${editCell('laborPika', laborPika, PIKA_DARK)}
+      <td style="${valStyleTT}">${fmtVarSummaryMoney(laborTT)}</td>
+      <td style="${valStyleBattelle}">${fmtVarSummaryMoney(laborBattelle)}</td>
+      <td style="${valStyle} text-align:center;">${qaCheck(laborTotal, laborPika, laborTT, laborBattelle)}</td>
+    </tr>`;
+
+    // RD On-Contract: all 4 columns editable so the user can
+    // enter contract figures directly. QA checks the sum. The
+    // sub-comment under the label preserves the verbiage from
+    // the former "Funded Field w/ Per Diem but no PIKA G&A and
+    // ODCs" row, which this row replaces.
+    const onContractPika = getVarSummaryInput(rd, 'onContractPika');
+    const onContractTT = getVarSummaryInput(rd, 'onContractTT');
+    const onContractBattelle = getVarSummaryInput(rd, 'onContractBattelle');
+    const onContractSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
+    const rowOnContract = `<tr style="${rowBorderStyle}">
+      <td style="${labelStyle}">${escapeHtml(rd)} On Contract${onContractSubNote}</td>
+      ${editCell('onContract', onContract, '#a00')}
+      ${editCell('onContractPika', onContractPika, PIKA_DARK)}
+      ${editCell('onContractTT', onContractTT, TT_DARK)}
+      ${editCell('onContractBattelle', onContractBattelle, BAT_DARK)}
+      <td style="${valStyle} text-align:center;">${qaCheck(onContract, onContractPika, onContractTT, onContractBattelle)}</td>
+    </tr>`;
+
     // BY adjustment row uses a uniform BRIGHT red across ALL
     // cells (label, total, per-company, QA) to signal that BY
     // descopes are OFFICIAL (the contract has formally let
@@ -12288,13 +13031,23 @@ function renderVariationsSummary() {
         <td style="${valStyleByAll}">${fmtVarSummaryMoney(yearObj.total.battelle)}</td>
         <td style="${valStyle} text-align:center;">${qaCheck(yearObj.total.total, yearObj.total.pika, yearObj.total.tt, yearObj.total.battelle)}</td>
       </tr>`;
-      const descopeZero = yearObj.descope.total === 0 && yearObj.descope.pika === 0 && yearObj.descope.tt === 0 && yearObj.descope.battelle === 0;
-      const newSitesZero = yearObj.newSites.total === 0 && yearObj.newSites.pika === 0 && yearObj.newSites.tt === 0 && yearObj.newSites.battelle === 0;
-      const newSitesIsLast = !newSitesZero;
-      const descopeIsLast  = !descopeZero && newSitesZero;
+      // BY's incurred has been rolled forward to OY1.byIncurred,
+      // so the BY row's incurred sub-row should be empty here.
+      // Keep the rowSub call so future changes don't drop it.
+      const isSubZero = sub => sub.total === 0 && sub.pika === 0 && sub.tt === 0 && sub.battelle === 0;
+      const descopeZero    = isSubZero(yearObj.descope);
+      const incurredZero   = isSubZero(yearObj.incurred);
+      const newSitesZero   = isSubZero(yearObj.newSites);
+      const byIncurredZero = isSubZero(yearObj.byIncurred);
+      const byIncurredIsLast = !byIncurredZero;
+      const newSitesIsLast   = !newSitesZero && byIncurredZero;
+      const incurredIsLast   = !incurredZero && newSitesZero && byIncurredZero;
+      const descopeIsLast    = !descopeZero && incurredZero && newSitesZero && byIncurredZero;
       return parent
-        + rowSub('Potential Descope', yearObj.descope, descopeIsLast)
-        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast);
+        + rowSub('Potential Descope', yearObj.descope,    descopeIsLast)
+        + rowSub('Incurred Cost',     yearObj.incurred,   incurredIsLast)
+        + rowSub('New Sites Cost',    yearObj.newSites,   newSitesIsLast)
+        + rowSub('BY Incurred Cost',  yearObj.byIncurred, byIncurredIsLast);
     };
 
     return `
@@ -12314,6 +13067,8 @@ function renderVariationsSummary() {
           <tbody>
             ${rowInput(`${escapeHtml(rd)} On Contract`, onContract, 'onContract', getVarSummaryWorkbookValue(rd, 'onContract'))}
             ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField', getVarSummaryWorkbookValue(rd, 'fundedField'))}
+            ${rowOnContract}
+            ${rowLaborOnContract}
             ${rowAdjByWithDetails('BY de-scope', adj.by)}
             ${rowAdjWithDetails('OY1 Adjustment', adj.oy1)}
             ${rowAdjWithDetails('OY2 Adjustment', adj.oy2)}
@@ -12325,7 +13080,7 @@ function renderVariationsSummary() {
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${PIKA_DARK};">${fmtVarSummaryMoney(netAdjPika)}</td>
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${TT_DARK};">${fmtVarSummaryMoney(netAdjTT)}</td>
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${BAT_DARK};">${fmtVarSummaryMoney(netAdjBattelle)}</td>
-              <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total - fundedField, netAdjPika, netAdjTT, netAdjBattelle)}</td>
+              <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total - onContract, netAdjPika, netAdjTT, netAdjBattelle)}</td>
             </tr>
           </tbody>
         </table>
@@ -12373,6 +13128,8 @@ function renderVariationsSummary() {
             onclick="toggleVarSummaryDetails()"
             title="Show sub-rows under each year's adjustment with the Potential Descope and New Sites Cost components">${varSummaryShowDetails ? '✓ ' : ''}Show Details</button>
           <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Clear local overrides — values revert to workbook (Contract Totals) or hardcoded defaults">Reset Inputs</button>
+          <button class="nav-btn" onclick="showVariationsSummaryDiff()" title="Diagnostic: compare the descope site set used here vs the Site Variations tab's Scope Changes section">Diff with Variations</button>
+          <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Reset Funded Field values to defaults">Reset Inputs</button>
         </div>
       </div>
       <div style="padding:18px;">
@@ -12938,6 +13695,236 @@ function escapeAttr(s) {
   return escapeHtml(s).replace(/'/g, '&#039;');
 }
 
+// ------------------------------------------------------------------
+// Excel-style cell selection: click-drag a rectangle of <td> cells
+// and a tooltip near the cursor shows Count / Sum / Avg of the
+// numeric cells in the selection. Non-numeric cells are skipped.
+// Shift-click extends from the anchor. Esc or click-outside clears.
+// Inputs/buttons inside cells are untouched so editing still works.
+// ------------------------------------------------------------------
+(function initCellSumSelection() {
+  let selecting = false;
+  let anchor = null;          // { table, row, col }
+  let selected = new Set();   // Set<HTMLTableCellElement>
+  let baseSelected = null;    // Frozen prior islands (Ctrl-add) preserved
+                              // while the current rect is being drawn.
+                              // null = no frozen islands; a fresh drag
+                              // replaces everything.
+  let tooltip = null;
+  let lastTd = null;
+
+  function cellPos(td) {
+    const tr = td.parentElement;
+    if (!tr || tr.tagName !== 'TR') return null;
+    const table = tr.closest('table');
+    if (!table) return null;
+    return { table, row: tr.rowIndex, col: td.cellIndex };
+  }
+
+  function clearSel() {
+    selected.forEach(c => c.classList.remove('cell-selected'));
+    selected.clear();
+    baseSelected = null;
+    hideTip();
+  }
+
+  function applyRect(a, b, base) {
+    if (!a || !b || a.table !== b.table) return;
+    const r0 = Math.min(a.row, b.row), r1 = Math.max(a.row, b.row);
+    const c0 = Math.min(a.col, b.col), c1 = Math.max(a.col, b.col);
+    selected.forEach(c => c.classList.remove('cell-selected'));
+    selected.clear();
+    if (base) {
+      base.forEach(c => { c.classList.add('cell-selected'); selected.add(c); });
+    }
+    const rows = a.table.rows;
+    for (let r = r0; r <= r1; r++) {
+      const tr = rows[r]; if (!tr) continue;
+      for (let c = c0; c <= c1; c++) {
+        const cell = tr.cells[c];
+        if (!cell || cell.tagName !== 'TD') continue;
+        cell.classList.add('cell-selected');
+        selected.add(cell);
+      }
+    }
+  }
+
+  // Parse the visible text of a cell as a number. Handles money formats:
+  // "$1,234.56", "$ (1,234.56)" (parens = negative), plain "1234", "12%".
+  // Cells that render a sub-note alongside the main number set
+  // data-cell-num="<formatted main>" so we can isolate the numeric
+  // portion without picking up the note text.
+  function parseCellNumber(td) {
+    let txt = (td.dataset && td.dataset.cellNum) || (td.textContent || '');
+    txt = txt.trim();
+    if (!txt) return NaN;
+    let neg = false;
+    if (/\(.+\)/.test(txt)) { neg = true; txt = txt.replace(/[()]/g, ''); }
+    txt = txt.replace(/[\$,%\s]/g, '');
+    if (txt.startsWith('-')) { neg = !neg; txt = txt.slice(1); }
+    if (!txt || !/^\d/.test(txt)) return NaN;
+    const n = parseFloat(txt);
+    if (!isFinite(n)) return NaN;
+    return neg ? -n : n;
+  }
+
+  function fmt2(n) {
+    const abs = Math.abs(n).toLocaleString('en-US', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+    return n < 0 ? `$ (${abs})` : `$${abs}`;
+  }
+
+  function ensureTip() {
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.className = 'cell-sum-tooltip';
+    document.body.appendChild(tooltip);
+    return tooltip;
+  }
+
+  function showTip(nearTd) {
+    let count = 0, numCount = 0, sum = 0;
+    selected.forEach(cell => {
+      count++;
+      const n = parseCellNumber(cell);
+      if (isFinite(n)) { numCount++; sum += n; }
+    });
+    if (count === 0) { hideTip(); return; }
+    const tip = ensureTip();
+    const avg = numCount > 0 ? sum / numCount : 0;
+    const sumCls = sum < 0 ? 'val neg' : 'val';
+    const avgCls = avg < 0 ? 'val neg' : 'val';
+    tip.innerHTML =
+      `<div class="row"><span class="lbl">Count</span><span class="val">${numCount}${count !== numCount ? ` / ${count}` : ''}</span></div>` +
+      (numCount > 0
+        ? `<div class="row"><span class="lbl">Sum</span><span class="${sumCls}">${fmt2(sum)}</span></div>` +
+          `<div class="row"><span class="lbl">Avg</span><span class="${avgCls}">${fmt2(avg)}</span></div>`
+        : '');
+    tip.style.display = 'block';
+
+    const rect = (nearTd || Array.from(selected)[selected.size - 1]).getBoundingClientRect();
+    const tw = tip.offsetWidth || 160;
+    const th = tip.offsetHeight || 70;
+    let left = rect.right + 10;
+    let top  = rect.top;
+    if (left + tw > window.innerWidth - 8) left = rect.left - tw - 10;
+    if (left < 8) left = 8;
+    if (top + th > window.innerHeight - 8) top = window.innerHeight - th - 8;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px';
+    tip.style.top  = top  + 'px';
+  }
+
+  function hideTip() {
+    if (tooltip) tooltip.style.display = 'none';
+  }
+
+  document.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    // Don't hijack interactive controls inside cells.
+    if (e.target.closest('input, button, select, textarea, a, label')) return;
+    const td = e.target.closest('td');
+    if (!td) {
+      if (!e.target.closest('.cell-sum-tooltip')) clearSel();
+      return;
+    }
+    const pos = cellPos(td);
+    if (!pos) return;
+    e.preventDefault();
+    document.body.classList.add('cell-selecting');
+
+    const meta = e.ctrlKey || e.metaKey;
+
+    if (meta) {
+      // Ctrl/Cmd modifier: non-contiguous multi-select.
+      //  - On an unselected cell: freeze existing islands, add this cell,
+      //    and let a drag from here paint a NEW rectangle on top of the
+      //    frozen islands.
+      //  - On an already-selected cell: toggle it off (no drag).
+      if (selected.has(td)) {
+        td.classList.remove('cell-selected');
+        selected.delete(td);
+        selecting = false;
+        if (selected.size > 0) showTip(td);
+        else { hideTip(); anchor = null; baseSelected = null; }
+        return;
+      }
+      baseSelected = new Set(selected);
+      td.classList.add('cell-selected');
+      selected.add(td);
+      anchor = pos;
+      selecting = true;
+      lastTd = td;
+      showTip(td);
+      return;
+    }
+
+    if (e.shiftKey && anchor && anchor.table === pos.table) {
+      // Shift extends from existing anchor. Any frozen prior islands
+      // (from earlier Ctrl-add operations) are preserved.
+      applyRect(anchor, pos, baseSelected);
+      selecting = true;
+      lastTd = td;
+      showTip(td);
+      return;
+    }
+
+    // Plain mousedown: start fresh, drop frozen islands.
+    baseSelected = null;
+    anchor = pos;
+    selected.forEach(c => c.classList.remove('cell-selected'));
+    selected.clear();
+    td.classList.add('cell-selected');
+    selected.add(td);
+    selecting = true;
+    lastTd = td;
+    showTip(td);
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!selecting || !anchor) return;
+    const td = e.target.closest('td');
+    if (!td) return;
+    const pos = cellPos(td);
+    if (!pos || pos.table !== anchor.table) return;
+    if (lastTd === td) { return; }
+    applyRect(anchor, pos, baseSelected);
+    lastTd = td;
+    showTip(td);
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!selecting) return;
+    selecting = false;
+    document.body.classList.remove('cell-selecting');
+    if (selected.size > 0) showTip(lastTd);
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && selected.size > 0) {
+      clearSel();
+      anchor = null;
+    }
+  });
+
+  // Suppress the click that follows a Ctrl/Cmd-mousedown on a cell, so
+  // row-level inline onclick handlers (e.g. RD expand/collapse on
+  // .sl-rd-row) don't fire when the user is just multi-selecting cells.
+  // Capture-phase + stopPropagation prevents the event from reaching the
+  // <tr>'s onclick listener. Controls inside cells still receive clicks.
+  document.addEventListener('click', e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.target.closest('input, button, select, textarea, a, label')) return;
+    if (!e.target.closest('td')) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  // Reposition tooltip on scroll/resize so it stays anchored to the cell.
+  window.addEventListener('scroll', () => { if (selected.size > 0 && lastTd) showTip(lastTd); }, true);
+  window.addEventListener('resize', () => { if (selected.size > 0 && lastTd) showTip(lastTd); });
+})();
 
 </script>
 
