@@ -2474,7 +2474,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v41</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v42</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -2581,6 +2581,13 @@ let contractTotalsFromWorkbook = {}; // { '63rd': { onContract, fundedField }, .
                                      // hardcoded VAR_SUMMARY_DEFAULTS, and surfaced
                                      // in the Site Variations Summary's QA column
                                      // as a ✓/✗ check vs. the entered value.
+let contractTotalsParseInfo = null;  // Diagnostic from the last parseContractTotals() run.
+                                     // Shape: { sheetName: string|null,
+                                     //          allSheetNames: string[],
+                                     //          labelsSeen: string[] }
+                                     // Used by the Site Variations Summary panel to
+                                     // explain why no values appear when the parser
+                                     // didn't find what it expected.
 let loadedSources = [];   // Array<string> — friendly labels of workbook sheets that
                           // contributed data on the last load. Populated by handleFile
                           // after parses complete and shown in the header tagline so
@@ -3606,17 +3613,24 @@ function parsePOPs(ws) {
 // just falls back to VAR_SUMMARY_DEFAULTS as before.
 function parseContractTotals(wb) {
   contractTotalsFromWorkbook = {};
-  const sheetName = wb.SheetNames.find(n => /^\s*contract\s*totals\s*$/i.test(n));
+  contractTotalsParseInfo = {
+    sheetName: null,
+    allSheetNames: wb.SheetNames.slice(),
+    labelsSeen: [],
+  };
+  // Looser sheet-name match: anything containing both "contract"
+  // and "totals" (e.g. "Contract Totals", "Contract Totals & Funded",
+  // "ContractTotals"). Falls back to exact match if multiple hit.
+  const matches = wb.SheetNames.filter(n => /contract.*totals|contracttotals/i.test(n));
+  const sheetName = matches[0] || null;
   if (!sheetName) {
     console.warn('parseContractTotals: no "Contract Totals" tab — On Contract / Funded Field will use hardcoded defaults');
+    console.warn('parseContractTotals: workbook sheets present:', wb.SheetNames);
     return;
   }
+  contractTotalsParseInfo.sheetName = sheetName;
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-
-  // Column F is index 5 (A=0). The Total sits in the first
-  // numeric cell to the right of the label.
-  const LABEL_COL = 5;
 
   const rdFromLabel = (label) => {
     const s = String(label).trim().toLowerCase();
@@ -3632,48 +3646,63 @@ function parseContractTotals(wb) {
     return null;
   };
 
+  // Scan every cell in every row for a label match — labels could
+  // be in any column. Records the column the label landed in so
+  // we can take the first numeric cell to its right as the Total.
   let currentRd = null;
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     if (!row) continue;
-    const labelRaw = row[LABEL_COL];
-    if (labelRaw == null || labelRaw === '') continue;
-    const labelStr = String(labelRaw).trim();
-    const isOnContract = /on\s*contract/i.test(labelStr);
-    const isFundedField = /funded\s*field/i.test(labelStr);
-    if (!isOnContract && !isFundedField) continue;
-
-    let value = null;
-    for (let c = LABEL_COL + 1; c < row.length; c++) {
-      const v = row[c];
-      if (typeof v === 'number' && !isNaN(v)) { value = v; break; }
-    }
-    if (value == null) continue;
-
-    if (isOnContract) {
-      const rd = rdFromLabel(labelStr);
-      if (!rd) {
-        console.warn(`parseContractTotals: could not identify RD in label "${labelStr}" at row ${r + 1}`);
-        continue;
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
+      if (cell == null || cell === '' || typeof cell === 'number') continue;
+      const labelStr = String(cell).trim();
+      if (!labelStr) continue;
+      const isOnContract = /on\s*contract/i.test(labelStr);
+      const isFundedField = /funded\s*field/i.test(labelStr);
+      if (!isOnContract && !isFundedField) continue;
+      // Capture for diagnostics
+      if (contractTotalsParseInfo.labelsSeen.length < 30) {
+        const colLetter = c < 26 ? String.fromCharCode(65 + c) : `col${c}`;
+        contractTotalsParseInfo.labelsSeen.push(`row ${r + 1} ${colLetter}: ${labelStr}`);
       }
-      currentRd = rd;
-      if (!contractTotalsFromWorkbook[rd]) contractTotalsFromWorkbook[rd] = {};
-      contractTotalsFromWorkbook[rd].onContract = value;
-    } else if (isFundedField) {
-      if (!currentRd) {
-        console.warn(`parseContractTotals: Funded Field row at ${r + 1} with no preceding On Contract row to attach to`);
-        continue;
+
+      let value = null;
+      for (let cc = c + 1; cc < row.length; cc++) {
+        const v = row[cc];
+        if (typeof v === 'number' && !isNaN(v)) { value = v; break; }
       }
-      if (!contractTotalsFromWorkbook[currentRd]) contractTotalsFromWorkbook[currentRd] = {};
-      contractTotalsFromWorkbook[currentRd].fundedField = value;
+      if (value == null) continue;
+
+      if (isOnContract) {
+        const rd = rdFromLabel(labelStr);
+        if (!rd) {
+          console.warn(`parseContractTotals: could not identify RD in label "${labelStr}" at row ${r + 1}`);
+          continue;
+        }
+        currentRd = rd;
+        if (!contractTotalsFromWorkbook[rd]) contractTotalsFromWorkbook[rd] = {};
+        contractTotalsFromWorkbook[rd].onContract = value;
+      } else if (isFundedField) {
+        if (!currentRd) {
+          console.warn(`parseContractTotals: Funded Field row at ${r + 1} with no preceding On Contract row to attach to`);
+          continue;
+        }
+        if (!contractTotalsFromWorkbook[currentRd]) contractTotalsFromWorkbook[currentRd] = {};
+        contractTotalsFromWorkbook[currentRd].fundedField = value;
+      }
+      // Only one label per row makes sense — break out of column scan
+      break;
     }
   }
 
   const found = Object.keys(contractTotalsFromWorkbook).length;
   if (found === 0) {
-    console.warn('parseContractTotals: tab present but no recognizable rows found (expected labels like "63rd RD On Contract" and "Funded Field" in column F)');
+    console.warn(`parseContractTotals: sheet "${sheetName}" found but no rows matched. Labels seen:`, contractTotalsParseInfo.labelsSeen);
   } else if (found < 4) {
     console.warn('parseContractTotals: only matched', Object.keys(contractTotalsFromWorkbook), '— other RDs will use hardcoded defaults');
+  } else {
+    console.log(`parseContractTotals: parsed sheet "${sheetName}" →`, contractTotalsFromWorkbook);
   }
 }
 
@@ -13040,19 +13069,27 @@ function renderVariationsSummary() {
     </div>
   `;
 
-  // Contract Totals source-of-truth panel. Renders the values
-  // parseContractTotals() pulled from the workbook's "Contract
-  // Totals" tab so the user can verify what the parser saw
-  // without hovering each row's WB QA pill. Hidden when no
-  // workbook was loaded (or it didn't have the tab).
+  // Contract Totals source-of-truth panel. Always renders so the
+  // user can see what parseContractTotals() saw (or didn't see)
+  // in the loaded workbook — values when present, otherwise a
+  // diagnostic explaining what's missing (sheet name not found,
+  // sheet found but labels didn't match, etc.) so they can
+  // either rename the tab/labels or tell us how to adjust the
+  // parser.
   const wbRows = VAR_SUMMARY_RD_ORDER
     .map(rd => ({ rd, wb: contractTotalsFromWorkbook[rd] }))
     .filter(x => x.wb && (x.wb.onContract != null || x.wb.fundedField != null));
-  const contractTotalsPanelHtml = wbRows.length === 0 ? '' : `
+  const wrapPanel = (inner) => `
     <div style="margin:18px 18px 0; padding:12px 16px; background:rgba(0,0,0,0.03); border:1px solid var(--line); border-radius:4px;">
       <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); margin-bottom:8px;">
         Contract Totals · source: workbook "Contract Totals" tab
       </div>
+      ${inner}
+    </div>
+  `;
+  let contractTotalsPanelHtml = '';
+  if (wbRows.length > 0) {
+    contractTotalsPanelHtml = wrapPanel(`
       <table style="border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px;">
         <thead>
           <tr>
@@ -13074,8 +13111,25 @@ function renderVariationsSummary() {
       <div style="font-size:11px; color:var(--ink-mute); margin-top:8px; font-style:italic;">
         QA pills (WB ✓ / WB ✗) compare entered values against these.
       </div>
-    </div>
-  `;
+    `);
+  } else if (contractTotalsParseInfo) {
+    // Workbook was loaded but no values parsed — show why.
+    const info = contractTotalsParseInfo;
+    const sheetLine = info.sheetName
+      ? `<div style="font-size:12px; color:var(--ink);">Sheet matched: <strong>${escapeHtml(info.sheetName)}</strong></div>`
+      : `<div style="font-size:12px; color:#c62828; font-weight:600;">No sheet matched (looking for any sheet name containing "contract" and "totals").</div>`;
+    const labelsLine = info.labelsSeen && info.labelsSeen.length
+      ? `<div style="font-size:11px; color:var(--ink-mute); margin-top:6px;">Labels seen (looking for "On Contract" / "Funded Field"):
+          <ul style="margin:4px 0 0 18px; padding:0; font-family:'IBM Plex Mono',monospace;">
+            ${info.labelsSeen.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
+          </ul>
+        </div>`
+      : (info.sheetName
+          ? `<div style="font-size:11px; color:var(--ink-mute); margin-top:6px;">No cells containing "On Contract" or "Funded Field" found in any column of that sheet.</div>`
+          : '');
+    const sheetsLine = `<div style="font-size:11px; color:var(--ink-mute); margin-top:8px;">Sheets in workbook: <code style="word-break:break-all;">${escapeHtml((info.allSheetNames || []).join(', '))}</code></div>`;
+    contractTotalsPanelHtml = wrapPanel(sheetLine + labelsLine + sheetsLine);
+  }
 
   document.getElementById('viewMain').innerHTML = `
     <div class="panel">
