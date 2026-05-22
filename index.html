@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v54</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v55</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -12683,26 +12683,90 @@ function buildContractTotalsSourceHtml() {
 // can verify the source-of-truth figures without inline clutter
 // on the Site Variations Summary view.
 function showContractTotalsSource() {
-  const overlay = document.createElement('div');
-  overlay.className = 'var-diff-overlay';
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
-  overlay.innerHTML = `
-    <div class="var-diff-modal" style="width:900px; max-width:95vw; height:600px; max-height:90vh; min-width:520px; min-height:300px; resize:both; overflow:auto; display:flex; flex-direction:column;" onclick="event.stopPropagation()">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-shrink:0;">
-        <div>
-          <h2 style="margin:0; font-family:'DM Serif Display',serif;">Contract Totals Source</h2>
-          <div style="font-size:12px; color:var(--ink-mute); margin-top:2px;">
-            Values parsed from the workbook's "Contract Totals" tab. These pre-fill the editable inputs on the Site Variations Summary below and back the WB ✓ / ✗ mismatch checks. Drag the bottom-right corner to resize.
-          </div>
+  // Singleton: a second click on the button while the panel is
+  // already open just re-renders into place rather than stacking.
+  const existing = document.getElementById('contractTotalsSourcePanel');
+  if (existing) existing.remove();
+
+  // Free-floating panel — no backdrop, no outside-click dismiss.
+  // Stays on screen until the user hits ✕ Close. The page behind
+  // remains fully interactive so the popup can sit next to the
+  // per-RD tables for side-by-side reference. The header bar is
+  // a drag handle so the panel can be repositioned out of the way.
+  const panel = document.createElement('div');
+  panel.id = 'contractTotalsSourcePanel';
+  panel.style.cssText = [
+    'position: fixed',
+    'top: 80px',
+    'right: 20px',
+    'width: 900px',
+    'max-width: 95vw',
+    'height: 600px',
+    'max-height: 80vh',
+    'min-width: 520px',
+    'min-height: 240px',
+    'resize: both',
+    'overflow: auto',
+    'background: #fff',
+    'border-radius: 8px',
+    'padding: 18px 22px 22px',
+    'box-shadow: 0 10px 40px rgba(0,0,0,0.35)',
+    'color: var(--ink)',
+    'font-family: \'IBM Plex Sans\', sans-serif',
+    'z-index: 100000',
+    'display: flex',
+    'flex-direction: column',
+  ].join(';');
+  panel.innerHTML = `
+    <div class="ctp-drag" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-shrink:0; cursor:move; user-select:none;">
+      <div>
+        <h2 style="margin:0; font-family:'DM Serif Display',serif;">Contract Totals Source</h2>
+        <div style="font-size:12px; color:var(--ink-mute); margin-top:2px;">
+          Values parsed from the workbook's "Contract Totals" tab. Drag this header to move; drag the bottom-right corner to resize.
         </div>
-        <button class="nav-btn" onclick="this.closest('.var-diff-overlay').remove()" style="white-space:nowrap;">✕ Close</button>
       </div>
-      <div style="flex:1; overflow:auto;">${buildContractTotalsSourceHtml()}</div>
+      <button class="nav-btn" onclick="document.getElementById('contractTotalsSourcePanel').remove()" style="white-space:nowrap; cursor:pointer;">✕ Close</button>
     </div>
+    <div style="flex:1; overflow:auto;">${buildContractTotalsSourceHtml()}</div>
   `;
-  document.body.appendChild(overlay);
+  document.body.appendChild(panel);
+
+  // Drag-to-move via the header bar. Captures the pointer so the
+  // drag continues smoothly even if the cursor briefly leaves the
+  // panel. Stops propagation on the Close button + the resize
+  // corner so clicks there don't initiate a move.
+  const handle = panel.querySelector('.ctp-drag');
+  let dragState = null;
+  handle.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    if (e.button !== 0) return;
+    const rect = panel.getBoundingClientRect();
+    dragState = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    e.preventDefault();
+  });
+  const onMove = (e) => {
+    if (!dragState) return;
+    // Switch to top/left positioning so movement is unambiguous.
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    const left = Math.max(0, Math.min(window.innerWidth - 40, e.clientX - dragState.dx));
+    const top  = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - dragState.dy));
+    panel.style.left = left + 'px';
+    panel.style.top  = top + 'px';
+  };
+  const onUp = () => { dragState = null; };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  // Tear down listeners when the panel is removed (Close click or
+  // a second openContractTotalsSource() call).
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(panel)) {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: false });
 }
 
 function showVariationsSummaryDiff() {
