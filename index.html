@@ -2440,6 +2440,26 @@
   .cell-sum-tooltip .val { color: #f9fafb; font-variant-numeric: tabular-nums; }
   .cell-sum-tooltip .val.neg { color: #fca5a5; }
   body.cell-selecting { user-select: none; }
+
+  /* Diagnostic modal: Site Variations Summary "Diff with Variations". */
+  .var-diff-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 100000;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 32px;
+    overflow-y: auto;
+  }
+  .var-diff-modal {
+    background: #fff;
+    border-radius: 8px;
+    width: 100%;
+    max-width: 1200px;
+    padding: 18px 22px 22px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
 </style>
 </head>
 <body>
@@ -2450,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v23</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v24</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12223,6 +12243,218 @@ function fmtVarSummaryMoney(v) {
   return n < 0 ? `$ (${abs})` : `$ ${abs}`;
 }
 
+// Diagnostic: builds the descope-site set as the Site Variations
+// Scope Changes section sees it AND as this Summary tab sees it,
+// then surfaces the per-RD / per-year differences so the user can
+// see exactly which sites diverge. One-shot read-only view — does
+// not mutate anything.
+function computeVarSummaryDiff() {
+  const sections = [];
+  for (const rd of VAR_SUMMARY_RD_ORDER) {
+    // Variations Scope Changes — mirrors getSites in the
+    // 'variations' view definition above. Includes clones
+    // (excluded site that nonetheless has incurred cost).
+    const variationsById = new Map();
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      if (!s.scopeVar || String(s.scopeVar).length === 0) continue;
+      if (isNewSiteId(s.id)) continue;
+      const excluded = siteIsConfirmedScheduled(s)
+        || String(s.datesConfirmed || '').trim() === '';
+      if (!excluded) {
+        variationsById.set(s.id, { site: s, isClone: false });
+      } else if (siteHasIncurredCost(s)) {
+        variationsById.set(s.id, { site: s, isClone: true });
+      }
+    }
+    // Summary descope set — mirrors computeVarSummaryAdjustments
+    // descope branch.
+    const summaryById = new Map();
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      const cost = Number(s.cost) || 0;
+      if (cost === 0) continue;
+      if (isNewSiteId(s.id)) continue;
+      const hasScopeFlag = !!(s.scopeVar && String(s.scopeVar).trim());
+      if (!hasScopeFlag) continue;
+      const excluded = siteIsConfirmedScheduled(s)
+        || String(s.datesConfirmed || '').trim() === '';
+      if (excluded) continue;
+      if (siteFundedWithCredit(s)) continue;
+      summaryById.set(s.id, { site: s });
+    }
+
+    const allIds = new Set([...variationsById.keys(), ...summaryById.keys()]);
+    const rows = [];
+    for (const id of allIds) {
+      const inV = variationsById.has(id);
+      const inS = summaryById.has(id);
+      const site = (variationsById.get(id) || summaryById.get(id)).site;
+      const split = computeDescopePerCompany(site);
+      const cost = Number(site.cost) || 0;
+      const isClone = inV ? variationsById.get(id).isClone : false;
+      // Reasons each side excluded (when one side did).
+      let excludedReason = '';
+      if (inV && !inS) {
+        // Variations included; Summary excluded — why?
+        if (siteFundedWithCredit(site)) excludedReason = 'Summary excludes: credit-funded BY';
+        else if (cost === 0) excludedReason = 'Summary excludes: Total Cost = 0';
+        else if (isClone) excludedReason = 'Variations clone (cost null) — Summary requires cost > 0';
+        else excludedReason = 'Unknown — investigate';
+      } else if (inS && !inV) {
+        const excludedFromV = siteIsConfirmedScheduled(site)
+          || String(site.datesConfirmed || '').trim() === '';
+        if (excludedFromV) excludedReason = 'Variations excludes: confirmed-scheduled or blank Dates Confirmed';
+        else excludedReason = 'Unknown — investigate';
+      }
+      rows.push({
+        id,
+        year: siteYearForGrouping(site) || '(none)',
+        name: site.name || site.siteName || '',
+        cost,
+        pika: split.pika,
+        tt: split.tt,
+        battelle: split.battelle,
+        inV, inS, isClone, excludedReason,
+        creditFunded: siteFundedWithCredit(site),
+      });
+    }
+    // Sort: differences first (V-only then S-only), then both,
+    // each group sorted by year then id.
+    const yearRank = y => ({ 'Base Year': 0, 'Option Year 1': 1, 'Option Year 2': 2, 'Option Year 3': 3, 'Option Year 4': 4 })[y] ?? 99;
+    rows.sort((a, b) => {
+      const aState = a.inV && a.inS ? 2 : (a.inV ? 0 : 1);
+      const bState = b.inV && b.inS ? 2 : (b.inV ? 0 : 1);
+      if (aState !== bState) return aState - bState;
+      if (yearRank(a.year) !== yearRank(b.year)) return yearRank(a.year) - yearRank(b.year);
+      return String(a.id).localeCompare(String(b.id));
+    });
+    const onlyV = rows.filter(r => r.inV && !r.inS);
+    const onlyS = rows.filter(r => !r.inV && r.inS);
+    const both  = rows.filter(r => r.inV && r.inS);
+    // Per-year totals on each side so the user sees the
+    // aggregate gap, not just the row list.
+    const sumYears = (set) => {
+      const out = {};
+      const years = ['Base Year', 'Option Year 1', 'Option Year 2', 'Option Year 3', 'Option Year 4'];
+      for (const y of years) out[y] = { total: 0, pika: 0, tt: 0, battelle: 0 };
+      for (const r of rows) {
+        if (!set(r)) continue;
+        const bucket = out[r.year];
+        if (!bucket) continue;
+        bucket.total    += r.cost;
+        bucket.pika     += r.pika;
+        bucket.tt       += r.tt;
+        bucket.battelle += r.battelle;
+      }
+      return out;
+    };
+    const totalsV = sumYears(r => r.inV);
+    const totalsS = sumYears(r => r.inS);
+    sections.push({ rd, rows, onlyV, onlyS, both, totalsV, totalsS });
+  }
+  return sections;
+}
+
+function showVariationsSummaryDiff() {
+  if (!allSites || allSites.length === 0) return;
+  const sections = computeVarSummaryDiff();
+  const fmt = (n) => fmtVarSummaryMoney(Number(n) || 0);
+  const yearOrder = ['Base Year', 'Option Year 1', 'Option Year 2', 'Option Year 3', 'Option Year 4'];
+
+  const sectionsHtml = sections.map(sec => {
+    const totalsTable = `
+      <table style="width:100%; border-collapse:collapse; font-size:12px; font-family:'IBM Plex Mono',monospace; margin:8px 0 12px;">
+        <thead>
+          <tr style="background:rgba(0,0,0,0.06);">
+            <th style="text-align:left; padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">Year</th>
+            <th style="text-align:right; padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">Variations Total</th>
+            <th style="text-align:right; padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">Summary Total</th>
+            <th style="text-align:right; padding:4px 8px; border:1px solid rgba(0,0,0,0.1); color:#c62828;">Diff (V − S)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${yearOrder.map(y => {
+            const v = sec.totalsV[y].total;
+            const s = sec.totalsS[y].total;
+            const d = v - s;
+            if (v === 0 && s === 0) return '';
+            const diffCol = Math.abs(d) > 0.005 ? '#c62828' : 'var(--ink-mute)';
+            return `<tr>
+              <td style="padding:4px 8px; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(y)}</td>
+              <td style="padding:4px 8px; text-align:right; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(fmt(v))}</td>
+              <td style="padding:4px 8px; text-align:right; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(fmt(s))}</td>
+              <td style="padding:4px 8px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:${diffCol}; font-weight:600;">${escapeHtml(fmt(d))}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+    const rowList = (rows, title, emptyMsg) => {
+      if (rows.length === 0) {
+        return `<div style="font-size:12px; color:var(--ink-mute); margin:6px 0 12px; font-style:italic;">${title}: ${emptyMsg}</div>`;
+      }
+      return `
+        <div style="margin:6px 0 4px; font-weight:700; font-size:12px;">${title} (${rows.length})</div>
+        <table style="width:100%; border-collapse:collapse; font-size:11px; font-family:'IBM Plex Mono',monospace; margin-bottom:12px;">
+          <thead>
+            <tr style="background:rgba(0,0,0,0.06);">
+              <th style="text-align:left; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Site ID</th>
+              <th style="text-align:left; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Year</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Cost</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1); color:#1d4ed8;">PIKA</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1); color:#b91c1c;">TT</th>
+              <th style="text-align:right; padding:3px 6px; border:1px solid rgba(0,0,0,0.1); color:#6b21a8;">Battelle</th>
+              <th style="text-align:left; padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td style="padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(r.id)}${r.isClone ? ' <span style="color:var(--ink-mute);">(clone)</span>' : ''}</td>
+              <td style="padding:3px 6px; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(r.year)}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1);">${escapeHtml(fmt(r.cost))}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:#1d4ed8;">${escapeHtml(fmt(r.pika))}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:#b91c1c;">${escapeHtml(fmt(r.tt))}</td>
+              <td style="padding:3px 6px; text-align:right; border:1px solid rgba(0,0,0,0.1); color:#6b21a8;">${escapeHtml(fmt(r.battelle))}</td>
+              <td style="padding:3px 6px; border:1px solid rgba(0,0,0,0.1); font-family:'IBM Plex Sans',sans-serif; font-size:11px;">${escapeHtml(r.excludedReason || '')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      `;
+    };
+
+    return `
+      <div style="margin-bottom:18px; padding:12px 14px; background:#f9f9f9; border:1px solid rgba(0,0,0,0.12); border-radius:6px;">
+        <h3 style="margin:0 0 6px; font-family:'DM Serif Display',serif; font-size:18px;">${escapeHtml(sec.rd)} RD</h3>
+        ${totalsTable}
+        ${rowList(sec.onlyV, 'Only in Variations Scope Changes', 'none — Variations and Summary agree on inclusion')}
+        ${rowList(sec.onlyS, 'Only in Variations Summary',       'none — Variations and Summary agree on inclusion')}
+      </div>
+    `;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'var-diff-overlay';
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  overlay.innerHTML = `
+    <div class="var-diff-modal" onclick="event.stopPropagation()">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px;">
+        <div>
+          <h2 style="margin:0; font-family:'DM Serif Display',serif;">Variations ↔ Summary diff</h2>
+          <div style="font-size:12px; color:var(--ink-mute); margin-top:2px;">
+            Per-RD comparison of the descope site set as used by the Site Variations Scope Changes table (V) vs the Site Variations Summary tab (S). Sites listed only in one side explain the totals gap. Reason column shows which filter excludes each.
+          </div>
+        </div>
+        <button class="nav-btn" onclick="this.closest('.var-diff-overlay').remove()" style="white-space:nowrap;">✕ Close</button>
+      </div>
+      ${sectionsHtml}
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
 function renderVariationsSummary() {
   if (!allSites || allSites.length === 0) {
     document.getElementById('viewMain').innerHTML =
@@ -12522,6 +12754,7 @@ function renderVariationsSummary() {
             style="${varSummaryShowDetails ? 'background: var(--accent); color: #fff; border-color: var(--accent);' : ''}"
             onclick="toggleVarSummaryDetails()"
             title="Show sub-rows under each year's adjustment with the Potential Descope and New Sites Cost components">${varSummaryShowDetails ? '✓ ' : ''}Show Details</button>
+          <button class="nav-btn" onclick="showVariationsSummaryDiff()" title="Diagnostic: compare the descope site set used here vs the Site Variations tab's Scope Changes section">Diff with Variations</button>
           <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Reset Funded Field values to defaults">Reset Inputs</button>
         </div>
       </div>
