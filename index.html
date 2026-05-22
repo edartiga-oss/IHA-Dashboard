@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v50</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v51</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -3635,10 +3635,14 @@ function parseContractTotals(wb) {
   // Find header row → per-company column positions. The source
   // workbook places PIKA / Tetra Tech / Battelle headers above
   // their respective dollar columns (L / P / T in the screenshot),
-  // each followed by a percentage column. Scan the first ~5 rows
-  // for cells matching the company names and record their column
-  // index so each data row can pull values from the same columns.
-  const companyCols = { pika: -1, tt: -1, battelle: -1 };
+  // each followed by a percentage column. A separate "PIKA ODC
+  // and G&A" column (col N in the screenshot) sits between PIKA's
+  // % and Tetra Tech's $ — it holds the labor row's PIKA overhead
+  // contribution (zero/blank on the On Contract row). Scan the
+  // first ~6 rows for cells matching any of those header names and
+  // record their column index so each data row can pull values
+  // from the right column.
+  const companyCols = { pika: -1, tt: -1, battelle: -1, pikaOdcGA: -1 };
   const headerScanRows = Math.min(rows.length, 6);
   for (let r = 0; r < headerScanRows; r++) {
     const row = rows[r];
@@ -3650,8 +3654,13 @@ function parseContractTotals(wb) {
       if (s === 'pika' && companyCols.pika < 0) companyCols.pika = c;
       else if ((s === 'tetra tech' || s === 'tt' || s === 'tetratech') && companyCols.tt < 0) companyCols.tt = c;
       else if (s === 'battelle' && companyCols.battelle < 0) companyCols.battelle = c;
+      // Match variations of "PIKA ODC and G&A" — accepts any cell
+      // mentioning both "odc" and "g&a" (with or without surrounding
+      // spaces / extra punctuation). Distinct from the bare "pika"
+      // header so it doesn't collide with the per-company column.
+      else if (companyCols.pikaOdcGA < 0 && /odc/.test(s) && /g\s*&\s*a/.test(s)) companyCols.pikaOdcGA = c;
     }
-    if (companyCols.pika >= 0 && companyCols.tt >= 0 && companyCols.battelle >= 0) break;
+    if (companyCols.pika >= 0 && companyCols.tt >= 0 && companyCols.battelle >= 0 && companyCols.pikaOdcGA >= 0) break;
   }
   contractTotalsParseInfo.companyCols = { ...companyCols };
 
@@ -3724,6 +3733,11 @@ function parseContractTotals(wb) {
         if (!contractTotalsFromWorkbook[currentRd]) contractTotalsFromWorkbook[currentRd] = {};
         contractTotalsFromWorkbook[currentRd].fundedField = total;
         contractTotalsFromWorkbook[currentRd].fundedFieldByCo = byCo;
+        // PIKA ODC and G&A (col N in the source) — labor-row only.
+        // Captured here so the Contract Totals Source popup can
+        // surface it next to PIKA's labor figure. Stored as null
+        // when the header wasn't found or the cell is blank.
+        contractTotalsFromWorkbook[currentRd].fundedFieldPikaOdcGA = numAt(row, companyCols.pikaOdcGA);
         contractTotalsFromWorkbook[currentRd].fundedFieldRow = r + 1;
       }
       // Only one label per row makes sense — break out of column scan
@@ -12588,6 +12602,10 @@ function buildContractTotalsSourceHtml() {
     .filter(x => x.wb && (x.wb.onContract != null || x.wb.fundedField != null));
   if (wbRows.length > 0) {
     const PIKA_C = '#1d4ed8', TT_C = '#b91c1c', BAT_C = '#6b21a8';
+    // PIKA ODC and G&A uses a lighter PIKA tint so the eye groups
+    // it with the PIKA column visually but reads it as a separate
+    // (overhead) line item.
+    const PIKA_ODC_C = '#3b6ee0';
     const cellTd = 'padding:3px 16px; text-align:right; font-family:\'IBM Plex Mono\',monospace;';
     const fmtCell = (n, color) => n != null
       ? `<td style="${cellTd} color:${color};">${fmtVarSummaryMoney(n)}</td>`
@@ -12600,6 +12618,7 @@ function buildContractTotalsSourceHtml() {
             <th style="text-align:left; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Row</th>
             <th style="text-align:right; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Total</th>
             <th style="text-align:right; padding:4px 16px; color:${PIKA_C}; font-weight:700;">PIKA</th>
+            <th style="text-align:right; padding:4px 16px; color:${PIKA_ODC_C}; font-weight:600; font-size:11px;">PIKA ODC<br>&amp; G&amp;A</th>
             <th style="text-align:right; padding:4px 16px; color:${TT_C}; font-weight:700;">Tetra Tech</th>
             <th style="text-align:right; padding:4px 0 4px 16px; color:${BAT_C}; font-weight:700;">Battelle</th>
           </tr>
@@ -12616,6 +12635,7 @@ function buildContractTotalsSourceHtml() {
                 <td style="padding:3px 16px; color:var(--ink); font-size:11px;">On Contract${ocRow}</td>
                 ${fmtCell(wb.onContract, 'var(--ink)')}
                 ${fmtCell(ocBy.pika, PIKA_C)}
+                ${fmtCell(null, PIKA_ODC_C)}
                 ${fmtCell(ocBy.tt, TT_C)}
                 ${fmtCell(ocBy.battelle, BAT_C)}
               </tr>
@@ -12623,6 +12643,7 @@ function buildContractTotalsSourceHtml() {
                 <td style="padding:3px 16px; color:var(--ink); font-size:11px; font-style:italic;">Labor (Funded Field)${ffRow}</td>
                 ${fmtCell(wb.fundedField, 'var(--ink)')}
                 ${fmtCell(ffBy.pika, PIKA_C)}
+                ${fmtCell(wb.fundedFieldPikaOdcGA, PIKA_ODC_C)}
                 ${fmtCell(ffBy.tt, TT_C)}
                 ${fmtCell(ffBy.battelle, BAT_C)}
               </tr>
@@ -12632,6 +12653,7 @@ function buildContractTotalsSourceHtml() {
       </table>
       <div style="font-size:11px; color:var(--ink-mute); margin-top:12px; font-style:italic;">
         Cells in the Site Variations Summary rows below are red-bordered when they differ from these source values.
+        PIKA ODC &amp; G&amp;A is the labor-row-only overhead figure from the workbook (column N in the source).
       </div>
     `;
   }
