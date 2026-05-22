@@ -2474,7 +2474,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v46</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v47</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -12803,11 +12803,19 @@ function renderVariationsSummary() {
     return;
   }
 
-  // Build per-RD sections
+  // Build per-RD sections. Grand-total accumulators now carry the
+  // full per-company breakdown across three logical bands:
+  //   * fullContract*  — On Contract row (workbook-sourced)
+  //   * labor*         — Labor On-Contract row
+  //   * postAdj*       — section total (Labor + every year's adjustment)
+  // Each band gets a Total + PIKA + TT + Battelle. netAdj* kept for
+  // back-compat with the existing "Net Adjustment per Company" row
+  // (sum of all years' adjustments excluding Labor base).
   const grandTotals = {
-    fullContract: 0,
-    fundedField: 0,
+    fullContract: 0, fullContractPika: 0, fullContractTT: 0, fullContractBattelle: 0,
+    laborTotal: 0,  laborPika: 0,        laborTT: 0,        laborBattelle: 0,
     postAdjustments: 0,
+    postAdjPika: 0, postAdjTT: 0, postAdjBattelle: 0,
     netAdjPika: 0, netAdjTT: 0, netAdjBattelle: 0,
     // BY de-scope is netted out of the per-RD Total and the grand
     // Post Adjustments / Net Adjustment cells, then surfaced as a
@@ -12859,30 +12867,64 @@ function renderVariationsSummary() {
       else if (team === 'TT')       fundedPerCo.tt       += teamCost;
       else if (team === 'Battelle') fundedPerCo.battelle += teamCost;
     }
-    // Per-RD Total / per-company Net Adjustments now EXCLUDE the
-    // BY year. BY de-scope is "official" contract money already
-    // off the books — pulling it out leaves the live, still-in-
-    // play working figure as the headline value. The BY portion
-    // appears as a sub-note on each cell. Mirrors the v22 TOTALS
-    // row on the Site Variations tab.
-    // Per-RD Total / per-company Net Adjustments include ALL
-    // years (BY + OY1-4) on top of the RD On-Contract base.
-    // The RD On-Contract value plays the role of the former
-    // "Funded Field w/ Per Diem..." input (the verbiage is now
-    // a sub-comment on the RD On-Contract row label).
-    const total = onContract + adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
+    // Labor On-Contract display values (workbook-sourced, falling
+    // back to funded-sites-computed when the workbook didn't
+    // provide that key). These are the BASE the section Total +
+    // grand totals build on top of, so they're resolved here
+    // (before `total` is computed) and reused when the Labor row
+    // is rendered further down.
+    const calcLaborPika     = fundedPerCo.pika;
+    const calcLaborTT       = fundedPerCo.tt;
+    const calcLaborBattelle = fundedPerCo.battelle;
+    const calcLaborTotal    = calcLaborPika + calcLaborTT + calcLaborBattelle;
+    const wbLaborTotal      = getVarSummaryWorkbookValue(rd, 'fundedField');
+    const wbLaborPika       = getVarSummaryWorkbookValue(rd, 'laborPika');
+    const wbLaborTT         = getVarSummaryWorkbookValue(rd, 'laborTT');
+    const wbLaborBattelle   = getVarSummaryWorkbookValue(rd, 'laborBattelle');
+    const dispLaborTotal    = wbLaborTotal    != null ? wbLaborTotal    : calcLaborTotal;
+    const dispLaborPika     = wbLaborPika     != null ? wbLaborPika     : calcLaborPika;
+    const dispLaborTT       = wbLaborTT       != null ? wbLaborTT       : calcLaborTT;
+    const dispLaborBattelle = wbLaborBattelle != null ? wbLaborBattelle : calcLaborBattelle;
+
+    // On Contract per-company values (read-only, workbook-sourced
+    // via getVarSummaryInput). Resolved early so per-company grand
+    // totals can accumulate the values regardless of where the row
+    // is rendered.
+    const onContractPika     = getVarSummaryInput(rd, 'onContractPika');
+    const onContractTT       = getVarSummaryInput(rd, 'onContractTT');
+    const onContractBattelle = getVarSummaryInput(rd, 'onContractBattelle');
+
     // Per-company sums of ALL years' adjustments. Used for the
-    // per-company Total cells + bottom rollup.
+    // section Total row + grand totals.
     const netAdjPika     = adj.by.total.pika     + adj.oy1.total.pika     + adj.oy2.total.pika     + adj.oy3.total.pika     + adj.oy4.total.pika;
     const netAdjTT       = adj.by.total.tt       + adj.oy1.total.tt       + adj.oy2.total.tt       + adj.oy3.total.tt       + adj.oy4.total.tt;
     const netAdjBattelle = adj.by.total.battelle + adj.oy1.total.battelle + adj.oy2.total.battelle + adj.oy3.total.battelle + adj.oy4.total.battelle;
+    const sumAdjTotal    = adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
 
-    grandTotals.fullContract     += onContract;
-    grandTotals.fundedField      += onContract;
-    grandTotals.postAdjustments  += total;
-    grandTotals.netAdjPika       += netAdjPika;
-    grandTotals.netAdjTT         += netAdjTT;
-    grandTotals.netAdjBattelle   += netAdjBattelle;
+    // Section bottom row: Labor On-Contract + every year's
+    // adjustment. Per the v46 model these are the values the user
+    // tracks the contract against — labor base + cumulative
+    // adjustments = where the contract stands "after" everything.
+    const total          = dispLaborTotal    + sumAdjTotal;
+    const bottomPika     = dispLaborPika     + netAdjPika;
+    const bottomTT       = dispLaborTT       + netAdjTT;
+    const bottomBattelle = dispLaborBattelle + netAdjBattelle;
+
+    grandTotals.fullContract         += onContract;
+    grandTotals.fullContractPika     += onContractPika;
+    grandTotals.fullContractTT       += onContractTT;
+    grandTotals.fullContractBattelle += onContractBattelle;
+    grandTotals.laborTotal           += dispLaborTotal;
+    grandTotals.laborPika            += dispLaborPika;
+    grandTotals.laborTT              += dispLaborTT;
+    grandTotals.laborBattelle        += dispLaborBattelle;
+    grandTotals.postAdjustments      += total;
+    grandTotals.postAdjPika          += bottomPika;
+    grandTotals.postAdjTT            += bottomTT;
+    grandTotals.postAdjBattelle      += bottomBattelle;
+    grandTotals.netAdjPika           += netAdjPika;
+    grandTotals.netAdjTT             += netAdjTT;
+    grandTotals.netAdjBattelle       += netAdjBattelle;
 
     const tint = VAR_SUMMARY_RD_TINT[rd] || '#f7f7f7';
     // Color palette for per-company columns. Header gets the bold
@@ -13071,94 +13113,54 @@ function renderVariationsSummary() {
       </tr>`;
     };
 
-    // Compact editable money cell — narrow input + tiny ★ save-
-    // as-default button. Used by the On Contract / Labor On-
-    // Contract rows where multiple columns are individually
-    // editable and the wider "Save as Default" button style
-    // would not fit. Button flips to ✓ and dims when the
-    // displayed value matches the saved user default for the key.
-    // When the cell's key has a workbook source value, the input
-    // gets a red border + light pink background when the displayed
-    // value differs from the workbook (highlighting overrides /
-    // stale defaults that no longer match the contract source).
-    const editCell = (key, value, color) => {
-      const userDef = (varSummaryUserDefaults[rd] || {})[key];
-      const hasUserDef = userDef != null;
-      const matchesUserDef = hasUserDef && Math.abs(Number(userDef) - value) < 0.005;
-      const btnLabel = matchesUserDef ? '✓' : '★';
-      const btnTitle = matchesUserDef
-        ? `Saved as default ($${Number(userDef).toFixed(2)})`
-        : (hasUserDef
-            ? `Save as default (current saved: $${Number(userDef).toFixed(2)})`
-            : 'Save current value as this RD\'s default');
-      const btnColor = matchesUserDef ? '#2e7d32' : 'var(--ink-mute)';
-      const btnExtra = matchesUserDef ? 'opacity:0.6; cursor:default;' : '';
-      const wbVal = getVarSummaryWorkbookValue(rd, key);
-      const wbHighlight = wbCellHighlight(value, wbVal);
-      const wbTitle = wbCellTitle(wbVal);
-      const inStyle = `width:110px; padding:3px 6px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; border:1px solid var(--line); background:#fff; color:${color}; font-weight:700;${wbHighlight}`;
-      const btnStyle = `margin-left:4px; padding:1px 5px; font-family:'IBM Plex Sans',sans-serif; font-size:10px; font-weight:600; border:1px solid var(--line); background:#fff; border-radius:3px; cursor:pointer; vertical-align:middle; color:${btnColor}; ${btnExtra}`;
-      return `<td style="padding:5px 8px; text-align:right; white-space:nowrap;">
-        <input type="number" step="0.01"
-          value="${value.toFixed(2)}"
-          onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
-          style="${inStyle}"${wbTitle}>
-        <button type="button"
-          onclick="setVarSummaryDefault('${escapeAttr(rd)}', '${key}')"
-          style="${btnStyle}"
-          title="${escapeAttr(btnTitle)}">${btnLabel}</button>
-      </td>`;
-    };
+    // (The compact editCell helper for the On Contract / Labor
+    // rows was removed when those rows became read-only. The
+    // wider "Save as Default" rowInput is still used by the
+    // remaining editable contract-input row above.)
 
-    // Labor On-Contract row: PIKA is editable, TT and Battelle
-    // are calculated from the funded-sites raw cost split (the
-    // values that used to populate the On Contract row before
-    // this row existed). TOTAL auto-sums the three so the
-    // sum-balance QA would always pass — instead we use the QA
-    // column to compare laborTotal against the workbook's
-    // "Funded Field w/ Per Diem but no PIKA G&A and ODCs" value
-    // from the Contract Totals tab (the workbook's labor-only
-    // figure). Sub-note carries that workbook verbiage so the
-    // user can see where the source figure comes from.
-    const laborPika = getVarSummaryInput(rd, 'laborPika');
-    const laborTT = fundedPerCo.tt;
-    const laborBattelle = fundedPerCo.battelle;
-    const laborTotal = laborPika + laborTT + laborBattelle;
-    const laborSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
-    const wbLaborTotal    = getVarSummaryWorkbookValue(rd, 'fundedField');
-    const wbLaborTT       = getVarSummaryWorkbookValue(rd, 'laborTT');
-    const wbLaborBattelle = getVarSummaryWorkbookValue(rd, 'laborBattelle');
-    const rowLaborOnContract = `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">Labor On-Contract${laborSubNote}</td>
-      <td style="${valStyle} font-weight:600; color:var(--ink);${wbCellHighlight(laborTotal, wbLaborTotal)}"${wbCellTitle(wbLaborTotal)}>${fmtVarSummaryMoney(laborTotal)}</td>
-      ${editCell('laborPika', laborPika, PIKA_DARK)}
-      <td style="${valStyleTT}${wbCellHighlight(laborTT, wbLaborTT)}"${wbCellTitle(wbLaborTT)}>${fmtVarSummaryMoney(laborTT)}</td>
-      <td style="${valStyleBattelle}${wbCellHighlight(laborBattelle, wbLaborBattelle)}"${wbCellTitle(wbLaborBattelle)}>${fmtVarSummaryMoney(laborBattelle)}</td>
-      <td style="${valStyle} text-align:center;">${wbCheckPill(laborTotal, wbLaborTotal)}</td>
-    </tr>`;
-
-    // RD On-Contract: read-only display. Values come from the
-    // workbook's "Contract Totals" tab (via getVarSummaryInput,
-    // which now consults workbook before defaults). Per-company
-    // cells show a small inline percentage of the row total so
-    // the company share is visible at a glance — mirrors the
-    // PIKA % / TT % / Battelle % columns in the source spreadsheet
-    // without adding three more dashboard columns. QA cell keeps
-    // the sum-balance check (validates the workbook's internal
-    // consistency: PIKA + TT + Battelle = Total).
-    const onContractPika = getVarSummaryInput(rd, 'onContractPika');
-    const onContractTT = getVarSummaryInput(rd, 'onContractTT');
-    const onContractBattelle = getVarSummaryInput(rd, 'onContractBattelle');
-    const pctOf = (val) => onContract > 0
+    // RD On-Contract: read-only, workbook-sourced. Per-company
+    // cells show a small muted inline percentage of the row total
+    // (company / On Contract) — mirrors the PIKA % / TT % /
+    // Battelle % columns in the source spreadsheet without adding
+    // three more dashboard columns. QA pill verifies the
+    // workbook's internal consistency: PIKA + TT + Battelle = Total.
+    const pctOfOnContract = (val) => onContract > 0
       ? `<span style="color:var(--ink-mute); font-weight:500; font-size:11px; margin-left:8px;">${(val / onContract * 100).toFixed(1)}%</span>`
       : '';
     const rowOnContract = `<tr style="${rowBorderStyle}">
       <td style="${labelStyle}">${escapeHtml(rd)} On Contract</td>
       <td style="${valStyle} font-weight:700; color:var(--ink);">${fmtVarSummaryMoney(onContract)}</td>
-      <td style="${valStylePika} white-space:nowrap;">${fmtVarSummaryMoney(onContractPika)}${pctOf(onContractPika)}</td>
-      <td style="${valStyleTT} white-space:nowrap;">${fmtVarSummaryMoney(onContractTT)}${pctOf(onContractTT)}</td>
-      <td style="${valStyleBattelle} white-space:nowrap;">${fmtVarSummaryMoney(onContractBattelle)}${pctOf(onContractBattelle)}</td>
+      <td style="${valStylePika} white-space:nowrap;">${fmtVarSummaryMoney(onContractPika)}${pctOfOnContract(onContractPika)}</td>
+      <td style="${valStyleTT} white-space:nowrap;">${fmtVarSummaryMoney(onContractTT)}${pctOfOnContract(onContractTT)}</td>
+      <td style="${valStyleBattelle} white-space:nowrap;">${fmtVarSummaryMoney(onContractBattelle)}${pctOfOnContract(onContractBattelle)}</td>
       <td style="${valStyle} text-align:center; white-space:nowrap;">${qaCheck(onContract, onContractPika, onContractTT, onContractBattelle)}</td>
+    </tr>`;
+
+    // Labor On-Contract: displays the workbook's "Funded Field"
+    // values (Total + per-company, resolved into dispLabor* above)
+    // with mismatch highlight + tooltip when the funded-sites
+    // CALCULATED amount diverges from the workbook source.
+    // Per-company cells include a small muted inline percentage
+    // of the row total.
+    const labMismatch = (wbVal, calcVal) =>
+      wbVal != null && Math.abs(wbVal - calcVal) > 1
+        ? ' background:#fde7e7; box-shadow: inset 0 0 0 2px #c62828;'
+        : '';
+    const labTitle = (wbVal, calcVal) =>
+      wbVal != null && Math.abs(wbVal - calcVal) > 1
+        ? ` title="Calculated from funded sites: ${fmtVarSummaryMoney(calcVal)}"`
+        : '';
+    const pctOfLabor = (val) => dispLaborTotal > 0
+      ? `<span style="color:var(--ink-mute); font-weight:500; font-size:11px; margin-left:8px;">${(val / dispLaborTotal * 100).toFixed(1)}%</span>`
+      : '';
+    const laborSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
+    const rowLaborOnContract = `<tr style="${rowBorderStyle}">
+      <td style="${labelStyle}">Labor On-Contract${laborSubNote}</td>
+      <td style="${valStyle} font-weight:700; color:var(--ink);${labMismatch(wbLaborTotal, calcLaborTotal)}"${labTitle(wbLaborTotal, calcLaborTotal)}>${fmtVarSummaryMoney(dispLaborTotal)}</td>
+      <td style="${valStylePika} white-space:nowrap;${labMismatch(wbLaborPika, calcLaborPika)}"${labTitle(wbLaborPika, calcLaborPika)}>${fmtVarSummaryMoney(dispLaborPika)}${pctOfLabor(dispLaborPika)}</td>
+      <td style="${valStyleTT} white-space:nowrap;${labMismatch(wbLaborTT, calcLaborTT)}"${labTitle(wbLaborTT, calcLaborTT)}>${fmtVarSummaryMoney(dispLaborTT)}${pctOfLabor(dispLaborTT)}</td>
+      <td style="${valStyleBattelle} white-space:nowrap;${labMismatch(wbLaborBattelle, calcLaborBattelle)}"${labTitle(wbLaborBattelle, calcLaborBattelle)}>${fmtVarSummaryMoney(dispLaborBattelle)}${pctOfLabor(dispLaborBattelle)}</td>
+      <td style="${valStyle} text-align:center;">${wbCheckPill(calcLaborTotal, wbLaborTotal)}</td>
     </tr>`;
 
     // BY adjustment row uses a uniform BRIGHT red across ALL
@@ -13234,10 +13236,10 @@ function renderVariationsSummary() {
             <tr style="border-top:2px solid #555; background:rgba(0,0,0,0.05);">
               <td style="${labelStyleDark} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px;">Total</td>
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px;">${fmtVarSummaryMoney(total)}</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${PIKA_DARK};">${fmtVarSummaryMoney(netAdjPika)}</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${TT_DARK};">${fmtVarSummaryMoney(netAdjTT)}</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${BAT_DARK};">${fmtVarSummaryMoney(netAdjBattelle)}</td>
-              <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total - onContract, netAdjPika, netAdjTT, netAdjBattelle)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${PIKA_DARK};">${fmtVarSummaryMoney(bottomPika)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${TT_DARK};">${fmtVarSummaryMoney(bottomTT)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${BAT_DARK};">${fmtVarSummaryMoney(bottomBattelle)}</td>
+              <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total, bottomPika, bottomTT, bottomBattelle)}</td>
             </tr>
           </tbody>
         </table>
@@ -13245,31 +13247,53 @@ function renderVariationsSummary() {
     `;
   }).join('');
 
-  // Bottom totals block
+  // Bottom totals block: three rows (On Contract, Labor
+  // On-Contract, After Adjustments) × four columns (Total, PIKA,
+  // TT, Battelle). Same brand colors as the per-RD sections so
+  // the eye groups grand-total cells with their per-RD origin.
+  // The "After Adjustments" Total + per-company values reflect
+  // the new bottom-of-section formula: Labor + every year's
+  // adjustment.
+  const PIKA_C = '#1d4ed8', TT_C = '#b91c1c', BAT_C = '#6b21a8';
+  const gtHeaderTh = "padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); font-weight:700;";
+  const gtRowLabel = "padding:8px 12px; text-align:right; font-weight:700; font-family:'IBM Plex Sans',sans-serif; font-size:13px; color:var(--ink);";
+  const gtCell     = "padding:8px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:700;";
   const bottomTotalsHtml = `
     <div style="display:grid; grid-template-columns:170px 1fr; background:#eaeaea; border:1px solid #888; border-radius:6px; padding:14px; box-shadow:0 1px 2px rgba(0,0,0,0.04);">
       <div style="font-family:'IBM Plex Sans',sans-serif; font-weight:700; font-size:16px; align-self:center; padding-left:6px; letter-spacing:1px;">GRAND TOTAL</div>
       <table style="width:100%; border-collapse:collapse; background:rgba(255,255,255,0.5); border-radius:4px;">
-        <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
-          <td style="padding:6px 12px; text-align:right; font-weight:600; font-family:'IBM Plex Sans',sans-serif; font-size:13px;">Full Contract</td>
-          <td style="padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:700;">${fmtVarSummaryMoney(grandTotals.fullContract)}</td>
-        </tr>
-        <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
-          <td style="padding:6px 12px; text-align:right; font-weight:600; font-family:'IBM Plex Sans',sans-serif; font-size:13px;">Funded Field w/ ODC</td>
-          <td style="padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:700;">${fmtVarSummaryMoney(grandTotals.fundedField)}</td>
-        </tr>
-        <tr style="border-bottom:2px solid #555;">
-          <td style="padding:6px 12px; text-align:right; font-weight:700; font-family:'IBM Plex Sans',sans-serif; font-size:13px;">Post Adjustments</td>
-          <td style="padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:700; color:#a00;">${fmtVarSummaryMoney(grandTotals.postAdjustments)}</td>
-        </tr>
-        <tr>
-          <td style="padding:6px 12px; text-align:right; font-weight:600; font-family:'IBM Plex Sans',sans-serif; font-size:13px; padding-top:8px;">Net Adjustment per Company</td>
-          <td style="padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:13px; padding-top:8px;">
-            <span style="color:#1d4ed8; font-weight:700; margin-right:16px;">PIKA ${fmtVarSummaryMoney(grandTotals.netAdjPika)}</span>
-            <span style="color:#b91c1c; font-weight:700; margin-right:16px;">TT ${fmtVarSummaryMoney(grandTotals.netAdjTT)}</span>
-            <span style="color:#6b21a8; font-weight:700;">Battelle ${fmtVarSummaryMoney(grandTotals.netAdjBattelle)}</span>
-          </td>
-        </tr>
+        <thead>
+          <tr style="border-bottom:1px solid rgba(0,0,0,0.15);">
+            <th style="${gtHeaderTh} text-align:left;"></th>
+            <th style="${gtHeaderTh}">Total</th>
+            <th style="${gtHeaderTh} color:${PIKA_C};">PIKA</th>
+            <th style="${gtHeaderTh} color:${TT_C};">TT</th>
+            <th style="${gtHeaderTh} color:${BAT_C};">Battelle</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
+            <td style="${gtRowLabel}">On Contract</td>
+            <td style="${gtCell}">${fmtVarSummaryMoney(grandTotals.fullContract)}</td>
+            <td style="${gtCell} color:${PIKA_C};">${fmtVarSummaryMoney(grandTotals.fullContractPika)}</td>
+            <td style="${gtCell} color:${TT_C};">${fmtVarSummaryMoney(grandTotals.fullContractTT)}</td>
+            <td style="${gtCell} color:${BAT_C};">${fmtVarSummaryMoney(grandTotals.fullContractBattelle)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
+            <td style="${gtRowLabel}">Labor On-Contract</td>
+            <td style="${gtCell}">${fmtVarSummaryMoney(grandTotals.laborTotal)}</td>
+            <td style="${gtCell} color:${PIKA_C};">${fmtVarSummaryMoney(grandTotals.laborPika)}</td>
+            <td style="${gtCell} color:${TT_C};">${fmtVarSummaryMoney(grandTotals.laborTT)}</td>
+            <td style="${gtCell} color:${BAT_C};">${fmtVarSummaryMoney(grandTotals.laborBattelle)}</td>
+          </tr>
+          <tr style="border-top:2px solid #555;">
+            <td style="${gtRowLabel}">After Adjustments</td>
+            <td style="${gtCell} color:#a00; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjustments)}</td>
+            <td style="${gtCell} color:${PIKA_C}; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjPika)}</td>
+            <td style="${gtCell} color:${TT_C}; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjTT)}</td>
+            <td style="${gtCell} color:${BAT_C}; font-size:15px;">${fmtVarSummaryMoney(grandTotals.postAdjBattelle)}</td>
+          </tr>
+        </tbody>
       </table>
     </div>
   `;
