@@ -62,6 +62,7 @@
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 16px;
+    position: relative;
   }
   .brand { display: flex; align-items: baseline; gap: 14px; }
   .brand h1 {
@@ -85,6 +86,9 @@
     border: 1px solid var(--accent-soft);
     border-radius: 999px;
     opacity: 0.75;
+    position: absolute;
+    top: 6px;
+    right: 10px;
   }
   .file-zone { display: flex; align-items: center; gap: 12px; }
   .file-info {
@@ -2470,7 +2474,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v40</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v41</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
