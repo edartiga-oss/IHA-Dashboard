@@ -12881,35 +12881,12 @@ function renderVariationsSummary() {
         <td style="${valStyle} text-align:center;">${qaNone}</td>
       </tr>`;
     };
-    // Editable contract-input row. The QA cell compares the
-    // entered value against the workbook's "Contract Totals" tab
-    // (when present) — ✓ within $1, ✗ otherwise, "—" when no
-    // workbook source is available. The workbook value is also
-    // surfaced via a hover tooltip so users can see what the tab
-    // says without re-checking the spreadsheet.
-    const rowInput = (label, value, key, wbValue) => {
-      let qaCell = qaNone;
-      let titleAttr = '';
-      if (wbValue != null) {
-        const matches = Math.abs(Number(value) - wbValue) <= 1;
-        qaCell = matches ? qaPass : qaFail;
-        const wbStr = fmtVarSummaryMoney(wbValue);
-        titleAttr = ` title="Workbook (Contract Totals): ${wbStr}"`;
-      }
-      return `<tr style="${rowBorderStyle}">
-        <td style="${labelStyle}">${label}</td>
-        <td style="${valStyle}">
-          <input type="number" step="0.01"
-            value="${Number(value).toFixed(2)}"
-            onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
-            style="${inputStyle}"${titleAttr}>
-        </td>
-        <td style="${dashStyle}">—</td>
-        <td style="${dashStyle}">—</td>
-        <td style="${dashStyle}">—</td>
-        <td style="${valStyle} text-align:center;"${titleAttr}>${qaCell}</td>
-      </tr>`;
-    };
+    // NOTE: a workbook-QA variant of rowInput was added in PR #41
+    // (Contract Totals) but main has since refactored these rows
+    // into rowOnContract / rowLaborOnContract — so the redefinition
+    // here would shadow the main version above and was removed.
+    // The Contract Totals parser still runs and contractTotalsFromWorkbook
+    // is available for a follow-up wiring into the new row helpers.
 
     const headerStyle = "padding:8px 12px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); border-bottom:2px solid #888; text-align:right; background:rgba(0,0,0,0.04);";
     const headerStyleCenter = headerStyle.replace('text-align:right','text-align:center');
@@ -13065,8 +13042,6 @@ function renderVariationsSummary() {
             </tr>
           </thead>
           <tbody>
-            ${rowInput(`${escapeHtml(rd)} On Contract`, onContract, 'onContract', getVarSummaryWorkbookValue(rd, 'onContract'))}
-            ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField', getVarSummaryWorkbookValue(rd, 'fundedField'))}
             ${rowOnContract}
             ${rowLaborOnContract}
             ${rowAdjByWithDetails('BY de-scope', adj.by)}
