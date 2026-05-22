@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v30</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v31</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12593,6 +12593,29 @@ function renderVariationsSummary() {
     const onContract  = getVarSummaryInput(rd, 'onContract');
     const fundedField = getVarSummaryInput(rd, 'fundedField');
     const adj = computeVarSummaryAdjustments(rd);
+    // Funded per-company cost: raw CIH / Lead IH / Add Cost /
+    // Team Cost columns from every site with Total Cost > 0,
+    // mapped to companies the same way the per-RD WIP rollup
+    // does (PIKA gets CIH + Add Cost; Lead IH bucket goes to
+    // TT for 63rd/81st and Battelle for 99th/9th MSC; Team Cost
+    // routes by each site's Team field). Drives the per-company
+    // columns of the On Contract row.
+    const leadIhCo = (rd === '99th' || rd === '9th MSC') ? 'battelle' : 'tt';
+    const fundedPerCo = { pika: 0, tt: 0, battelle: 0 };
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      if ((Number(s.cost) || 0) <= 0) continue;
+      const cih      = Number(s.cih)      || 0;
+      const leadIh   = Number(s.leadIH)   || 0;
+      const addCost  = Number(s.addCost)  || 0;
+      const teamCost = Number(s.teamCost) || 0;
+      const team     = s.team || '';
+      fundedPerCo.pika      += cih + addCost;
+      fundedPerCo[leadIhCo] += leadIh;
+      if      (team === 'PIKA')     fundedPerCo.pika     += teamCost;
+      else if (team === 'TT')       fundedPerCo.tt       += teamCost;
+      else if (team === 'Battelle') fundedPerCo.battelle += teamCost;
+    }
     // Per-RD Total / per-company Net Adjustments now EXCLUDE the
     // BY year. BY de-scope is "official" contract money already
     // off the books — pulling it out leaves the live, still-in-
@@ -12753,17 +12776,25 @@ function renderVariationsSummary() {
     const headerStyle = "padding:8px 12px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); border-bottom:2px solid #888; text-align:right; background:rgba(0,0,0,0.04);";
     const headerStyleCenter = headerStyle.replace('text-align:right','text-align:center');
 
-    // Fixed-value display row used for On Contract — the value
+    // Fixed-value display row used for On Contract — Total
     // comes from the CLINS-derived defaults (CLINS task order
-    // total minus $25K reconciliation), not editable.
-    const rowFixed = (label, value) => `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${label}</td>
-      <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(value)}</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${valStyle} text-align:center;">${qaNone}</td>
-    </tr>`;
+    // total minus $25K reconciliation), not editable. Optional
+    // perCo argument populates the company columns with the
+    // funded-sites raw cost split; passed as null to keep them
+    // as em-dashes. Sum of per-company values won't necessarily
+    // match the CLINS Total (CLINS includes overhead/fees beyond
+    // the per-site work breakdown), so QA stays em-dash.
+    const rowFixed = (label, value, perCo) => {
+      const hasPerCo = !!perCo;
+      return `<tr style="${rowBorderStyle}">
+        <td style="${labelStyle}">${label}</td>
+        <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(value)}</td>
+        <td style="${hasPerCo ? valStylePika    : dashStyle}">${hasPerCo ? fmtVarSummaryMoney(perCo.pika)     : '—'}</td>
+        <td style="${hasPerCo ? valStyleTT      : dashStyle}">${hasPerCo ? fmtVarSummaryMoney(perCo.tt)       : '—'}</td>
+        <td style="${hasPerCo ? valStyleBattelle: dashStyle}">${hasPerCo ? fmtVarSummaryMoney(perCo.battelle) : '—'}</td>
+        <td style="${valStyle} text-align:center;">${qaNone}</td>
+      </tr>`;
+    };
 
     // BY adjustment row uses a uniform BRIGHT red across ALL
     // cells (label, total, per-company, QA) to signal that BY
@@ -12828,7 +12859,7 @@ function renderVariationsSummary() {
             </tr>
           </thead>
           <tbody>
-            ${rowFixed(`${escapeHtml(rd)} On Contract`, onContract)}
+            ${rowFixed(`${escapeHtml(rd)} On Contract`, onContract, fundedPerCo)}
             ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField')}
             ${rowAdjByWithDetails('BY de-scope', adj.by)}
             ${rowAdjWithDetails('OY1 Adjustment', adj.oy1)}
