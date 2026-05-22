@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v27</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v28</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12152,25 +12152,30 @@ function resetVarSummaryInputs() {
 // Computed adjustments per RD, sourced from allSites.
 // Returns an object with one entry per year (by / oy1 / oy2 /
 // oy3 / oy4), each of which has:
-//   { descope, newSites, incurred, total: { total, pika, tt, battelle } }
-// where descope, newSites and incurred all have the same shape
-// (total + per-company). total = descope + newSites + incurred —
-// that's the displayed "adjustment" for that year. Descopes are
-// negative, new sites positive, incurred positive (cost already
-// spent on those same sites — partially offsets the descope).
+//   { descope, newSites, incurred, byIncurred, total: { total, pika, tt, battelle } }
+// All sub-buckets have the same shape (total + per-company).
+// total = descope + newSites + incurred + byIncurred — that's the
+// displayed "adjustment" for that year. Descopes are negative,
+// new sites positive, incurred positive (cost already spent on
+// those same sites — partially offsets the descope). byIncurred
+// is the BY→OY1 incurred rollforward and is non-zero only on OY1.
 //
 // Per-year accounting reasoning: the contract adjustment for an
 // option year covers both directions — sites being descoped
 // (potential reduction) and NEW sites added to that year's
 // contract (addition). The combined figure is what gets booked
-// against the OY contract.
+// against the OY contract. Real-spent incurred on BY sites that
+// got descoped (or are surfaced as incurred-only clones in the
+// Variations tab) rolls into OY1's pool — that's the same logic
+// computeBaseYearRollforward applies to the Variations subtotals.
 function computeVarSummaryAdjustments(rd) {
   const empty = () => ({ total: 0, pika: 0, tt: 0, battelle: 0 });
   const emptyYear = () => ({
-    descope:  empty(),
-    newSites: empty(),
-    incurred: empty(),
-    total:    empty(),
+    descope:    empty(),
+    newSites:   empty(),
+    incurred:   empty(),
+    byIncurred: empty(),
+    total:      empty(),
   });
   const rows = {
     by:  emptyYear(),
@@ -12196,6 +12201,12 @@ function computeVarSummaryAdjustments(rd) {
     subrow.tt       += split.tt;
     subrow.battelle += split.battelle;
   };
+  const addBucket = (dest, src) => {
+    dest.total    += src.total;
+    dest.pika     += src.pika;
+    dest.tt       += src.tt;
+    dest.battelle += src.battelle;
+  };
   const yearKey = (yr) => {
     if (yr === 'Base Year')     return 'by';
     if (yr === 'Option Year 1') return 'oy1';
@@ -12220,15 +12231,18 @@ function computeVarSummaryAdjustments(rd) {
       // contract for this site.
       accumulateIncurred(rows[yk].incurred, s);
     } else {
-      // Existing scope-flagged sites contribute to descopes,
-      // subject to the same exclusion logic the Scope Changes
-      // table applies (confirmed-scheduled or blank Dates
-      // Confirmed sites are not actively reducing the contract).
       const hasScopeFlag = !!(s.scopeVar && String(s.scopeVar).trim());
       if (!hasScopeFlag) continue;
       const excluded = siteIsConfirmedScheduled(s)
         || String(s.datesConfirmed || '').trim() === '';
-      if (excluded) continue;
+      if (excluded) {
+        // Excluded from descope, but if money has been spent the
+        // Variations tab surfaces this as an incurred-only clone.
+        // Include the incurred so the Summary's Incurred Cost
+        // row matches the Variations year subtotal.
+        if (siteHasIncurredCost(s)) accumulateIncurred(rows[yk].incurred, s);
+        continue;
+      }
       // Credit-funded BY sites: cost was satisfied by an
       // existing credit balance, not a fresh descope. Skip
       // them so the BY de-scope sum reflects only sites that
@@ -12242,15 +12256,22 @@ function computeVarSummaryAdjustments(rd) {
       accumulateIncurred(rows[yk].incurred, s);
     }
   }
-  // Roll up descope + newSites + incurred into the year's total
-  // adjustment. Incurred is signed positive so it offsets the
-  // negative descope (or adds to a positive new-sites figure).
+  // BY→OY1 rollforward: every dollar of BY incurred cost (from
+  // descoped BY sites or BY incurred-only clones) is money the
+  // OY1 contract pool absorbs. Move the whole BY.incurred bucket
+  // into OY1.byIncurred so the Summary mirrors the Variations
+  // subtotal treatment. After this move, BY.incurred is empty.
+  addBucket(rows.oy1.byIncurred, rows.by.incurred);
+  rows.by.incurred = empty();
+  // Roll up descope + newSites + incurred + byIncurred into the
+  // year's total adjustment. Incurred and byIncurred are signed
+  // positive so they offset the negative descope.
   for (const yk of Object.keys(rows)) {
     const r = rows[yk];
-    r.total.total    = r.descope.total    + r.newSites.total    + r.incurred.total;
-    r.total.pika     = r.descope.pika     + r.newSites.pika     + r.incurred.pika;
-    r.total.tt       = r.descope.tt       + r.newSites.tt       + r.incurred.tt;
-    r.total.battelle = r.descope.battelle + r.newSites.battelle + r.incurred.battelle;
+    r.total.total    = r.descope.total    + r.newSites.total    + r.incurred.total    + r.byIncurred.total;
+    r.total.pika     = r.descope.pika     + r.newSites.pika     + r.incurred.pika     + r.byIncurred.pika;
+    r.total.tt       = r.descope.tt       + r.newSites.tt       + r.incurred.tt       + r.byIncurred.tt;
+    r.total.battelle = r.descope.battelle + r.newSites.battelle + r.incurred.battelle + r.byIncurred.battelle;
   }
   return rows;
 }
@@ -12628,18 +12649,22 @@ function renderVariationsSummary() {
       </tr>`;
       // Figure out which sub-row is "last visible" so the bottom
       // border lands on the right one. Order is Descope → New
-      // Sites → Incurred, so Incurred wins last-spot when present.
+      // Sites → Incurred → BY Incurred. BY Incurred wins last
+      // when present (only OY1 normally has it).
       const isSubZero = sub => sub.total === 0 && sub.pika === 0 && sub.tt === 0 && sub.battelle === 0;
-      const descopeZero  = isSubZero(yearObj.descope);
-      const newSitesZero = isSubZero(yearObj.newSites);
-      const incurredZero = isSubZero(yearObj.incurred);
-      const incurredIsLast = !incurredZero;
-      const newSitesIsLast = !newSitesZero && incurredZero;
-      const descopeIsLast  = !descopeZero && newSitesZero && incurredZero;
+      const descopeZero    = isSubZero(yearObj.descope);
+      const newSitesZero   = isSubZero(yearObj.newSites);
+      const incurredZero   = isSubZero(yearObj.incurred);
+      const byIncurredZero = isSubZero(yearObj.byIncurred);
+      const byIncurredIsLast = !byIncurredZero;
+      const incurredIsLast   = !incurredZero && byIncurredZero;
+      const newSitesIsLast   = !newSitesZero && incurredZero && byIncurredZero;
+      const descopeIsLast    = !descopeZero && newSitesZero && incurredZero && byIncurredZero;
       return parent
-        + rowSub('Potential Descope', yearObj.descope,  descopeIsLast)
-        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast)
-        + rowSub('Incurred Cost',     yearObj.incurred, incurredIsLast);
+        + rowSub('Potential Descope', yearObj.descope,    descopeIsLast)
+        + rowSub('New Sites Cost',    yearObj.newSites,   newSitesIsLast)
+        + rowSub('Incurred Cost',     yearObj.incurred,   incurredIsLast)
+        + rowSub('BY Incurred Cost',  yearObj.byIncurred, byIncurredIsLast);
     };
     const rowInput = (label, value, key) => `<tr style="${rowBorderStyle}">
       <td style="${labelStyle}">${label}</td>
@@ -12699,17 +12724,23 @@ function renderVariationsSummary() {
         <td style="${valStyleByAll}">${fmtVarSummaryMoney(yearObj.total.battelle)}</td>
         <td style="${valStyle} text-align:center;">${qaCheck(yearObj.total.total, yearObj.total.pika, yearObj.total.tt, yearObj.total.battelle)}</td>
       </tr>`;
+      // BY's incurred has been rolled forward to OY1.byIncurred,
+      // so the BY row's incurred sub-row should be empty here.
+      // Keep the rowSub call so future changes don't drop it.
       const isSubZero = sub => sub.total === 0 && sub.pika === 0 && sub.tt === 0 && sub.battelle === 0;
-      const descopeZero  = isSubZero(yearObj.descope);
-      const newSitesZero = isSubZero(yearObj.newSites);
-      const incurredZero = isSubZero(yearObj.incurred);
-      const incurredIsLast = !incurredZero;
-      const newSitesIsLast = !newSitesZero && incurredZero;
-      const descopeIsLast  = !descopeZero && newSitesZero && incurredZero;
+      const descopeZero    = isSubZero(yearObj.descope);
+      const newSitesZero   = isSubZero(yearObj.newSites);
+      const incurredZero   = isSubZero(yearObj.incurred);
+      const byIncurredZero = isSubZero(yearObj.byIncurred);
+      const byIncurredIsLast = !byIncurredZero;
+      const incurredIsLast   = !incurredZero && byIncurredZero;
+      const newSitesIsLast   = !newSitesZero && incurredZero && byIncurredZero;
+      const descopeIsLast    = !descopeZero && newSitesZero && incurredZero && byIncurredZero;
       return parent
-        + rowSub('Potential Descope', yearObj.descope,  descopeIsLast)
-        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast)
-        + rowSub('Incurred Cost',     yearObj.incurred, incurredIsLast);
+        + rowSub('Potential Descope', yearObj.descope,    descopeIsLast)
+        + rowSub('New Sites Cost',    yearObj.newSites,   newSitesIsLast)
+        + rowSub('Incurred Cost',     yearObj.incurred,   incurredIsLast)
+        + rowSub('BY Incurred Cost',  yearObj.byIncurred, byIncurredIsLast);
     };
 
     return `
