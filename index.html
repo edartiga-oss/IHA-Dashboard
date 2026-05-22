@@ -2892,9 +2892,25 @@ async function fetchWorkbookFromDrive() {
     timingOpen = true;
     console.time('[workbook] total');
     console.time('[workbook] fetch');
-    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-    const text = await resp.text();
+    // 120s ceiling: a full masterFetch needs to (a) cold-start
+    // Apps Script, (b) read the .xlsx from Drive, (c) base64
+    // encode, and (d) ship it back. Without the cap a hung Web
+    // App would freeze the ticker indefinitely.
+    const fetchController = new AbortController();
+    const fetchTimeout = setTimeout(() => fetchController.abort(), 120000);
+    let resp, text;
+    try {
+      resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow', signal: fetchController.signal });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      text = await resp.text();
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || /abort/i.test(e.message || ''))) {
+        throw new Error('Fetch timed out after 120s — the Apps Script may be cold-starting or the workbook may be too large for a single request.');
+      }
+      throw e;
+    } finally {
+      clearTimeout(fetchTimeout);
+    }
     console.timeEnd('[workbook] fetch');
     clearInterval(ticker);
     setProgress(`Fetched ${(text.length / 1024).toFixed(0)} KB in ${((performance.now() - t0) / 1000).toFixed(1)}s · decoding…`);
@@ -2958,8 +2974,21 @@ async function peekCloudWorkbook() {
   if (!el) return;
   const base = getCloudStateUrl();
   const url = base + (base.includes('?') ? '&' : '?') + 'action=masterInfo';
+  // Tick the message every 500ms so the user can see the peek is
+  // alive (otherwise "Checking the cloud…" stays static and looks
+  // hung even when the request is just slow). 20s AbortController
+  // timeout protects against an unresponsive Apps Script — without
+  // it, fetch hangs indefinitely.
+  const t0 = performance.now();
+  const ticker = setInterval(() => {
+    const sec = ((performance.now() - t0) / 1000).toFixed(1);
+    el.textContent = `Checking the cloud for the latest workbook… ${sec}s`;
+  }, 500);
+  const controller = new AbortController();
+  const timeoutMs = 20000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow', signal: controller.signal });
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
     const text = await resp.text();
     const parsed = JSON.parse(text);
@@ -2978,7 +3007,14 @@ async function peekCloudWorkbook() {
       + sizeKb;
   } catch (err) {
     console.warn('[cloud peek] failed', err);
-    el.innerHTML = 'Cloud peek failed: ' + escapeHtml(err.message);
+    const isAbort = err && (err.name === 'AbortError' || /abort/i.test(err.message || ''));
+    const msg = isAbort
+      ? `Cloud peek timed out after ${(timeoutMs / 1000).toFixed(0)}s — Apps Script may be cold-starting. <a href="#" onclick="event.preventDefault();peekCloudWorkbook();" style="color:var(--accent);text-decoration:underline;">Retry</a>`
+      : 'Cloud peek failed: ' + escapeHtml(err.message);
+    el.innerHTML = msg;
+  } finally {
+    clearInterval(ticker);
+    clearTimeout(timeoutId);
   }
 }
 
