@@ -12292,14 +12292,23 @@ function computeVarSummaryDiff() {
       const inS = summaryById.has(id);
       const site = (variationsById.get(id) || summaryById.get(id)).site;
       const split = computeDescopePerCompany(site);
-      const cost = Number(site.cost) || 0;
+      const origCost = Number(site.cost) || 0;
       const isClone = inV ? variationsById.get(id).isClone : false;
+      // Clones render in the Variations tab with Total Cost
+      // nulled out (em-dash), so they contribute $0 to the
+      // per-year subtotal that this diff is reconciling. Mirror
+      // that here so Variations Total matches the on-screen
+      // figure rather than the underlying original cost.
+      const cost = isClone ? 0 : origCost;
+      const pika = isClone ? 0 : split.pika;
+      const tt = isClone ? 0 : split.tt;
+      const battelle = isClone ? 0 : split.battelle;
       // Reasons each side excluded (when one side did).
       let excludedReason = '';
       if (inV && !inS) {
         // Variations included; Summary excluded — why?
         if (siteFundedWithCredit(site) && siteYearForGrouping(site) === 'Base Year') excludedReason = 'Summary excludes: credit-funded BY';
-        else if (cost === 0) excludedReason = 'Summary excludes: Total Cost = 0';
+        else if (origCost === 0) excludedReason = 'Summary excludes: Total Cost = 0';
         else if (isClone) excludedReason = 'Variations clone (cost null) — Summary requires cost > 0';
         else excludedReason = 'Unknown — investigate';
       } else if (inS && !inV) {
@@ -12313,9 +12322,9 @@ function computeVarSummaryDiff() {
         year: siteYearForGrouping(site) || '(none)',
         name: site.name || site.siteName || '',
         cost,
-        pika: split.pika,
-        tt: split.tt,
-        battelle: split.battelle,
+        pika,
+        tt,
+        battelle,
         inV, inS, isClone, excludedReason,
         creditFunded: siteFundedWithCredit(site),
       });
