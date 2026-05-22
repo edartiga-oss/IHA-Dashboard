@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v34</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v35</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12586,7 +12586,6 @@ function renderVariationsSummary() {
 
   const rdSectionsHtml = VAR_SUMMARY_RD_ORDER.map(rd => {
     const onContract  = getVarSummaryInput(rd, 'onContract');
-    const fundedField = getVarSummaryInput(rd, 'fundedField');
     const adj = computeVarSummaryAdjustments(rd);
     // Funded per-company cost: raw CIH / Lead IH / Add Cost /
     // Team Cost columns from every site on the contract books —
@@ -12621,12 +12620,11 @@ function renderVariationsSummary() {
     // appears as a sub-note on each cell. Mirrors the v22 TOTALS
     // row on the Site Variations tab.
     // Per-RD Total / per-company Net Adjustments include ALL
-    // years (BY + OY1-4). BY de-scope is part of the rolled-up
-    // contract position — it stays in the headline figure rather
-    // than being pulled out as a sub-note. (BY incurred cost is
-    // already rolled forward into OY1.byIncurred, so it shows up
-    // there in the detail view, not under BY.)
-    const total = fundedField + adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
+    // years (BY + OY1-4) on top of the RD On-Contract base.
+    // The RD On-Contract value plays the role of the former
+    // "Funded Field w/ Per Diem..." input (the verbiage is now
+    // a sub-comment on the RD On-Contract row label).
+    const total = onContract + adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
     // Per-company sums of ALL years' adjustments. Used for the
     // per-company Total cells + bottom rollup.
     const netAdjPika     = adj.by.total.pika     + adj.oy1.total.pika     + adj.oy2.total.pika     + adj.oy3.total.pika     + adj.oy4.total.pika;
@@ -12634,7 +12632,7 @@ function renderVariationsSummary() {
     const netAdjBattelle = adj.by.total.battelle + adj.oy1.total.battelle + adj.oy2.total.battelle + adj.oy3.total.battelle + adj.oy4.total.battelle;
 
     grandTotals.fullContract     += onContract;
-    grandTotals.fundedField      += fundedField;
+    grandTotals.fundedField      += onContract;
     grandTotals.postAdjustments  += total;
     grandTotals.netAdjPika       += netAdjPika;
     grandTotals.netAdjTT         += netAdjTT;
@@ -12845,12 +12843,16 @@ function renderVariationsSummary() {
     </tr>`;
 
     // RD On-Contract: all 4 columns editable so the user can
-    // enter contract figures directly. QA checks the sum.
+    // enter contract figures directly. QA checks the sum. The
+    // sub-comment under the label preserves the verbiage from
+    // the former "Funded Field w/ Per Diem but no PIKA G&A and
+    // ODCs" row, which this row replaces.
     const onContractPika = getVarSummaryInput(rd, 'onContractPika');
     const onContractTT = getVarSummaryInput(rd, 'onContractTT');
     const onContractBattelle = getVarSummaryInput(rd, 'onContractBattelle');
+    const onContractSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
     const rowOnContract = `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${escapeHtml(rd)} On Contract</td>
+      <td style="${labelStyle}">${escapeHtml(rd)} On Contract${onContractSubNote}</td>
       ${editCell('onContract', onContract, '#a00')}
       ${editCell('onContractPika', onContractPika, PIKA_DARK)}
       ${editCell('onContractTT', onContractTT, TT_DARK)}
@@ -12921,9 +12923,8 @@ function renderVariationsSummary() {
             </tr>
           </thead>
           <tbody>
-            ${rowLaborOnContract}
             ${rowOnContract}
-            ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField')}
+            ${rowLaborOnContract}
             ${rowAdjByWithDetails('BY de-scope', adj.by)}
             ${rowAdjWithDetails('OY1 Adjustment', adj.oy1)}
             ${rowAdjWithDetails('OY2 Adjustment', adj.oy2)}
@@ -12935,7 +12936,7 @@ function renderVariationsSummary() {
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${PIKA_DARK};">${fmtVarSummaryMoney(netAdjPika)}</td>
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${TT_DARK};">${fmtVarSummaryMoney(netAdjTT)}</td>
               <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${BAT_DARK};">${fmtVarSummaryMoney(netAdjBattelle)}</td>
-              <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total - fundedField, netAdjPika, netAdjTT, netAdjBattelle)}</td>
+              <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total - onContract, netAdjPika, netAdjTT, netAdjBattelle)}</td>
             </tr>
           </tbody>
         </table>
