@@ -2474,7 +2474,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v42</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v43</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -3617,6 +3617,7 @@ function parseContractTotals(wb) {
     sheetName: null,
     allSheetNames: wb.SheetNames.slice(),
     labelsSeen: [],
+    companyCols: null,
   };
   // Looser sheet-name match: anything containing both "contract"
   // and "totals" (e.g. "Contract Totals", "Contract Totals & Funded",
@@ -3646,6 +3647,38 @@ function parseContractTotals(wb) {
     return null;
   };
 
+  // Find header row → per-company column positions. The source
+  // workbook places PIKA / Tetra Tech / Battelle headers above
+  // their respective dollar columns (L / P / T in the screenshot),
+  // each followed by a percentage column. Scan the first ~5 rows
+  // for cells matching the company names and record their column
+  // index so each data row can pull values from the same columns.
+  const companyCols = { pika: -1, tt: -1, battelle: -1 };
+  const headerScanRows = Math.min(rows.length, 6);
+  for (let r = 0; r < headerScanRows; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
+      if (typeof cell !== 'string') continue;
+      const s = cell.trim().toLowerCase();
+      if (s === 'pika' && companyCols.pika < 0) companyCols.pika = c;
+      else if ((s === 'tetra tech' || s === 'tt' || s === 'tetratech') && companyCols.tt < 0) companyCols.tt = c;
+      else if (s === 'battelle' && companyCols.battelle < 0) companyCols.battelle = c;
+    }
+    if (companyCols.pika >= 0 && companyCols.tt >= 0 && companyCols.battelle >= 0) break;
+  }
+  contractTotalsParseInfo.companyCols = { ...companyCols };
+
+  // Pull a numeric from a row at a specific column index. Returns
+  // null if the cell is missing/non-numeric or the column wasn't
+  // found in the header scan.
+  const numAt = (row, c) => {
+    if (c < 0 || !row || c >= row.length) return null;
+    const v = row[c];
+    return (typeof v === 'number' && !isNaN(v)) ? v : null;
+  };
+
   // Scan every cell in every row for a label match — labels could
   // be in any column. Records the column the label landed in so
   // we can take the first numeric cell to its right as the Total.
@@ -3659,7 +3692,11 @@ function parseContractTotals(wb) {
       const labelStr = String(cell).trim();
       if (!labelStr) continue;
       const isOnContract = /on\s*contract/i.test(labelStr);
-      const isFundedField = /funded\s*field/i.test(labelStr);
+      // Accept both "Funded Field" and bare "Field" (workbook truncates
+      // sometimes); also requires the "Per Diem" or "PIKA G&A" context
+      // for the bare-Field case so we don't catch unrelated field labels.
+      const isFundedField = /funded\s*field/i.test(labelStr)
+        || (/^\s*field\b/i.test(labelStr) && /per\s*diem|pika\s*g&a/i.test(labelStr));
       if (!isOnContract && !isFundedField) continue;
       // Capture for diagnostics
       if (contractTotalsParseInfo.labelsSeen.length < 30) {
@@ -3667,12 +3704,18 @@ function parseContractTotals(wb) {
         contractTotalsParseInfo.labelsSeen.push(`row ${r + 1} ${colLetter}: ${labelStr}`);
       }
 
-      let value = null;
+      let total = null;
       for (let cc = c + 1; cc < row.length; cc++) {
         const v = row[cc];
-        if (typeof v === 'number' && !isNaN(v)) { value = v; break; }
+        if (typeof v === 'number' && !isNaN(v)) { total = v; break; }
       }
-      if (value == null) continue;
+      if (total == null) continue;
+
+      const byCo = {
+        pika: numAt(row, companyCols.pika),
+        tt: numAt(row, companyCols.tt),
+        battelle: numAt(row, companyCols.battelle),
+      };
 
       if (isOnContract) {
         const rd = rdFromLabel(labelStr);
@@ -3682,14 +3725,16 @@ function parseContractTotals(wb) {
         }
         currentRd = rd;
         if (!contractTotalsFromWorkbook[rd]) contractTotalsFromWorkbook[rd] = {};
-        contractTotalsFromWorkbook[rd].onContract = value;
+        contractTotalsFromWorkbook[rd].onContract = total;
+        contractTotalsFromWorkbook[rd].onContractByCo = byCo;
       } else if (isFundedField) {
         if (!currentRd) {
           console.warn(`parseContractTotals: Funded Field row at ${r + 1} with no preceding On Contract row to attach to`);
           continue;
         }
         if (!contractTotalsFromWorkbook[currentRd]) contractTotalsFromWorkbook[currentRd] = {};
-        contractTotalsFromWorkbook[currentRd].fundedField = value;
+        contractTotalsFromWorkbook[currentRd].fundedField = total;
+        contractTotalsFromWorkbook[currentRd].fundedFieldByCo = byCo;
       }
       // Only one label per row makes sense — break out of column scan
       break;
@@ -3702,7 +3747,7 @@ function parseContractTotals(wb) {
   } else if (found < 4) {
     console.warn('parseContractTotals: only matched', Object.keys(contractTotalsFromWorkbook), '— other RDs will use hardcoded defaults');
   } else {
-    console.log(`parseContractTotals: parsed sheet "${sheetName}" →`, contractTotalsFromWorkbook);
+    console.log(`parseContractTotals: parsed sheet "${sheetName}" →`, contractTotalsFromWorkbook, 'companyCols:', companyCols);
   }
 }
 
@@ -13089,27 +13134,53 @@ function renderVariationsSummary() {
   `;
   let contractTotalsPanelHtml = '';
   if (wbRows.length > 0) {
+    // Per-RD block with two rows (On Contract + Labor / Funded
+    // Field). Total + 3 per-company columns. Per-company cells
+    // use the same brand colors as the rest of the dashboard so
+    // PIKA reads blue, TT dark red, Battelle purple.
+    const PIKA_C = '#1d4ed8', TT_C = '#b91c1c', BAT_C = '#6b21a8';
+    const cellTd = 'padding:3px 16px; text-align:right; font-family:\'IBM Plex Mono\',monospace;';
+    const fmtCell = (n, color) => n != null
+      ? `<td style="${cellTd} color:${color};">${fmtVarSummaryMoney(n)}</td>`
+      : `<td style="${cellTd} color:var(--ink-mute);">—</td>`;
     contractTotalsPanelHtml = wrapPanel(`
       <table style="border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px;">
         <thead>
           <tr>
             <th style="text-align:left; padding:4px 16px 4px 0; color:var(--ink-mute); font-weight:600;">RD / MSC</th>
-            <th style="text-align:right; padding:4px 16px; color:var(--ink-mute); font-weight:600;">On Contract</th>
-            <th style="text-align:right; padding:4px 0 4px 16px; color:var(--ink-mute); font-weight:600;">Labor (Funded Field)</th>
+            <th style="text-align:left; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Row</th>
+            <th style="text-align:right; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Total</th>
+            <th style="text-align:right; padding:4px 16px; color:${PIKA_C}; font-weight:700;">PIKA</th>
+            <th style="text-align:right; padding:4px 16px; color:${TT_C}; font-weight:700;">Tetra Tech</th>
+            <th style="text-align:right; padding:4px 0 4px 16px; color:${BAT_C}; font-weight:700;">Battelle</th>
           </tr>
         </thead>
         <tbody>
-          ${wbRows.map(({ rd, wb }) => `
-            <tr>
-              <td style="padding:3px 16px 3px 0; color:var(--ink); font-weight:600;">${escapeHtml(rd)}</td>
-              <td style="padding:3px 16px; text-align:right; color:var(--ink);">${wb.onContract != null ? fmtVarSummaryMoney(wb.onContract) : '<span style="color:var(--ink-mute);">—</span>'}</td>
-              <td style="padding:3px 0 3px 16px; text-align:right; color:var(--ink);">${wb.fundedField != null ? fmtVarSummaryMoney(wb.fundedField) : '<span style="color:var(--ink-mute);">—</span>'}</td>
-            </tr>
-          `).join('')}
+          ${wbRows.map(({ rd, wb }) => {
+            const ocBy = wb.onContractByCo || {};
+            const ffBy = wb.fundedFieldByCo || {};
+            return `
+              <tr style="border-top:1px solid rgba(0,0,0,0.08);">
+                <td rowspan="2" style="padding:3px 16px 3px 0; color:var(--ink); font-weight:700; vertical-align:top;">${escapeHtml(rd)}</td>
+                <td style="padding:3px 16px; color:var(--ink); font-size:11px;">On Contract</td>
+                ${fmtCell(wb.onContract, 'var(--ink)')}
+                ${fmtCell(ocBy.pika, PIKA_C)}
+                ${fmtCell(ocBy.tt, TT_C)}
+                ${fmtCell(ocBy.battelle, BAT_C)}
+              </tr>
+              <tr>
+                <td style="padding:3px 16px; color:var(--ink); font-size:11px; font-style:italic;">Labor (Funded Field)</td>
+                ${fmtCell(wb.fundedField, 'var(--ink)')}
+                ${fmtCell(ffBy.pika, PIKA_C)}
+                ${fmtCell(ffBy.tt, TT_C)}
+                ${fmtCell(ffBy.battelle, BAT_C)}
+              </tr>
+            `;
+          }).join('')}
         </tbody>
       </table>
       <div style="font-size:11px; color:var(--ink-mute); margin-top:8px; font-style:italic;">
-        QA pills (WB ✓ / WB ✗) compare entered values against these.
+        QA pills (WB ✓ / WB ✗) compare entered Totals against these.
       </div>
     `);
   } else if (contractTotalsParseInfo) {
