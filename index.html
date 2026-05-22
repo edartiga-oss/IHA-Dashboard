@@ -2514,6 +2514,13 @@ let invoiceClinExpanded = new Set(); // keys are "<rd>|<clin>" — which
                           // across re-renders so changing filters
                           // doesn't collapse the user's drill-downs.
 let reportStatusData = null; // Snapshot of the Report Status sheet, parsed once at load
+let contractTotalsFromWorkbook = {}; // { '63rd': { onContract, fundedField }, ... }
+                                     // Populated by parseContractTotals() from the
+                                     // "Contract Totals" tab when present. Used by
+                                     // getVarSummaryInput() as a fallback to the
+                                     // hardcoded VAR_SUMMARY_DEFAULTS, and surfaced
+                                     // in the Site Variations Summary's QA column
+                                     // as a ✓/✗ check vs. the entered value.
 let loadedSources = [];   // Array<string> — friendly labels of workbook sheets that
                           // contributed data on the last load. Populated by handleFile
                           // after parses complete and shown in the header tagline so
@@ -2974,6 +2981,7 @@ function processWorkbookBuffer(arrayBuffer, displayName) {
       parsePM(wb);                  // Optional — reads PM dollars from WIP & Invoiceable Items tab
       parseInvoice(wb);             // Optional — reads Invoice (Total Invoiceable for this Period)
       parseReportStatus(wb);        // Optional — snapshots the Report Status sheet
+      parseContractTotals(wb);      // Optional — reads Contract Totals tab for On Contract / Funded Field values
       // Reset the fallback dedup log so it fires fresh for the new
       // workbook. Without this, a second load in the same session
       // wouldn't show fallbacks for any sites already logged.
@@ -3006,6 +3014,7 @@ function processWorkbookBuffer(arrayBuffer, displayName) {
       if (wipName) loadedSources.push('WIP & Invoiceable Items');
       if (wb.SheetNames.includes('MSR Table 1')) loadedSources.push('MSR Table 1');
       if (reportStatusData) loadedSources.push('Report Status');
+      if (Object.keys(contractTotalsFromWorkbook).length > 0) loadedSources.push('Contract Totals');
 
       document.getElementById('fileInfo').innerHTML =
         `<div class="fname">${escapeHtml(displayName)}</div><div>${allSites.length} sites loaded</div>`;
@@ -3592,6 +3601,107 @@ function parsePOPs(ws) {
   } else if (found < 4) {
     console.warn('parsePOPs: only found POP dates for', Object.keys(rdPops), '— some RD blocks may be empty or shifted');
   }
+}
+
+// Parse the optional "Contract Totals" tab. Layout (per the
+// source workbook): labels run down column F, with per-row
+// values in the columns to the right (a Total followed by
+// per-company sub-totals headered with company names). We only
+// need the Total — the dashboard already computes its own
+// per-company breakdown.
+//
+// Recognized labels:
+//   "63rd RD On Contract …" / "81st RD On Contract …" /
+//   "99th RD On Contract …" / "9th MSC On Contract …"
+//     → onContract for that RD
+//   "Funded Field …" (any variation) following an On Contract row
+//     → fundedField for the most-recently-seen RD
+//
+// Sites the result on `contractTotalsFromWorkbook`. Missing or
+// malformed cells are ignored silently (with a console.warn) so
+// loading a workbook without this tab still works — the dashboard
+// just falls back to VAR_SUMMARY_DEFAULTS as before.
+function parseContractTotals(wb) {
+  contractTotalsFromWorkbook = {};
+  const sheetName = wb.SheetNames.find(n => /^\s*contract\s*totals\s*$/i.test(n));
+  if (!sheetName) {
+    console.warn('parseContractTotals: no "Contract Totals" tab — On Contract / Funded Field will use hardcoded defaults');
+    return;
+  }
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+
+  // Column F is index 5 (A=0). The Total sits in the first
+  // numeric cell to the right of the label.
+  const LABEL_COL = 5;
+
+  const rdFromLabel = (label) => {
+    const s = String(label).trim().toLowerCase();
+    // 9th MSC must be checked first — its label starts with "9"
+    // but isn't a 99th-style RD. Accepts "9 MSC", "9th MSC", etc.
+    if (/^9\s*(?:th)?\s*msc/.test(s) || /\b9\s*msc\b/.test(s)) return '9th MSC';
+    // Ordinal RD labels: "63rd", "81st", "99th". \b doesn't work
+    // here because "3r" / "1s" / "9t" aren't word boundaries —
+    // match the digits at the start of the label instead.
+    if (/^63\b|^63(?:rd)?/.test(s)) return '63rd';
+    if (/^81\b|^81(?:st)?/.test(s)) return '81st';
+    if (/^99\b|^99(?:th)?/.test(s)) return '99th';
+    return null;
+  };
+
+  let currentRd = null;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    const labelRaw = row[LABEL_COL];
+    if (labelRaw == null || labelRaw === '') continue;
+    const labelStr = String(labelRaw).trim();
+    const isOnContract = /on\s*contract/i.test(labelStr);
+    const isFundedField = /funded\s*field/i.test(labelStr);
+    if (!isOnContract && !isFundedField) continue;
+
+    let value = null;
+    for (let c = LABEL_COL + 1; c < row.length; c++) {
+      const v = row[c];
+      if (typeof v === 'number' && !isNaN(v)) { value = v; break; }
+    }
+    if (value == null) continue;
+
+    if (isOnContract) {
+      const rd = rdFromLabel(labelStr);
+      if (!rd) {
+        console.warn(`parseContractTotals: could not identify RD in label "${labelStr}" at row ${r + 1}`);
+        continue;
+      }
+      currentRd = rd;
+      if (!contractTotalsFromWorkbook[rd]) contractTotalsFromWorkbook[rd] = {};
+      contractTotalsFromWorkbook[rd].onContract = value;
+    } else if (isFundedField) {
+      if (!currentRd) {
+        console.warn(`parseContractTotals: Funded Field row at ${r + 1} with no preceding On Contract row to attach to`);
+        continue;
+      }
+      if (!contractTotalsFromWorkbook[currentRd]) contractTotalsFromWorkbook[currentRd] = {};
+      contractTotalsFromWorkbook[currentRd].fundedField = value;
+    }
+  }
+
+  const found = Object.keys(contractTotalsFromWorkbook).length;
+  if (found === 0) {
+    console.warn('parseContractTotals: tab present but no recognizable rows found (expected labels like "63rd RD On Contract" and "Funded Field" in column F)');
+  } else if (found < 4) {
+    console.warn('parseContractTotals: only matched', Object.keys(contractTotalsFromWorkbook), '— other RDs will use hardcoded defaults');
+  }
+}
+
+// Per-RD/MSC source-of-truth lookup used by the Site Variations
+// Summary QA column. Returns the workbook value for that input
+// if available, else null. The summary view compares the entered
+// (or default) value against this and shows a ✓/✗ pill.
+function getVarSummaryWorkbookValue(rd, key) {
+  const fromWb = contractTotalsFromWorkbook[rd];
+  if (fromWb && fromWb[key] != null) return Number(fromWb[key]);
+  return null;
 }
 
 // Parse per-RD status sheets to compute Work-in-Progress counts.
@@ -11815,9 +11925,12 @@ function renderVariations() {
 // Two of the rows per RD are external inputs (contract amounts
 // negotiated outside this workbook): "On Contract (Includes
 // OY4)" and "Funded Field w/ Per Diem but no PIKA G&A and ODCs".
-// These are stored in localStorage and editable in place. The
-// rest are computed from the workbook's site data per the rules
-// below.
+// Both are editable and persist via localStorage. They pre-fill
+// from the workbook's "Contract Totals" tab when present, and
+// fall back to hardcoded VAR_SUMMARY_DEFAULTS otherwise. The QA
+// cell on each row compares the entered value against the
+// workbook source. The remaining rows are computed from the
+// workbook's site data per the rules below.
 //
 // Sign convention: descopes are negative, new sites positive,
 // Total = Funded Field + every adjustment.
@@ -11871,16 +11984,15 @@ function toggleVarSummaryDetails() {
 }
 
 function getVarSummaryInput(rd, key) {
-  // onContract is FIXED — it comes from CLINS task order totals
-  // minus a $25K reconciliation factor, baked into the defaults.
-  // Stored overrides are ignored for this key (the field is no
-  // longer editable in the UI; this guards against stale
-  // localStorage from when it was editable).
-  if (key === 'onContract') {
-    return (VAR_SUMMARY_DEFAULTS[rd] || {}).onContract || 0;
-  }
+  // Priority: user override (localStorage) > workbook "Contract
+  // Totals" tab > hardcoded VAR_SUMMARY_DEFAULTS. Workbook values
+  // pre-fill the field; the user can still edit and the entered
+  // value is compared back against the workbook source in the QA
+  // column.
   const stored = varSummaryInputs[rd];
   if (stored && stored[key] != null) return Number(stored[key]) || 0;
+  const fromWb = contractTotalsFromWorkbook[rd];
+  if (fromWb && fromWb[key] != null) return Number(fromWb[key]) || 0;
   return (VAR_SUMMARY_DEFAULTS[rd] || {})[key] || 0;
 }
 
@@ -12114,34 +12226,38 @@ function renderVariationsSummary() {
         + rowSub('Potential Descope', yearObj.descope, descopeIsLast)
         + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast);
     };
-    const rowInput = (label, value, key) => `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${label}</td>
-      <td style="${valStyle}">
-        <input type="number" step="0.01"
-          value="${value.toFixed(2)}"
-          onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
-          style="${inputStyle}">
-      </td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${valStyle} text-align:center;">${qaNone}</td>
-    </tr>`;
+    // Editable contract-input row. The QA cell compares the
+    // entered value against the workbook's "Contract Totals" tab
+    // (when present) — ✓ within $1, ✗ otherwise, "—" when no
+    // workbook source is available. The workbook value is also
+    // surfaced via a hover tooltip so users can see what the tab
+    // says without re-checking the spreadsheet.
+    const rowInput = (label, value, key, wbValue) => {
+      let qaCell = qaNone;
+      let titleAttr = '';
+      if (wbValue != null) {
+        const matches = Math.abs(Number(value) - wbValue) <= 1;
+        qaCell = matches ? qaPass : qaFail;
+        const wbStr = fmtVarSummaryMoney(wbValue);
+        titleAttr = ` title="Workbook (Contract Totals): ${wbStr}"`;
+      }
+      return `<tr style="${rowBorderStyle}">
+        <td style="${labelStyle}">${label}</td>
+        <td style="${valStyle}">
+          <input type="number" step="0.01"
+            value="${Number(value).toFixed(2)}"
+            onchange="setVarSummaryInput('${escapeAttr(rd)}', '${key}', this.value)"
+            style="${inputStyle}"${titleAttr}>
+        </td>
+        <td style="${dashStyle}">—</td>
+        <td style="${dashStyle}">—</td>
+        <td style="${dashStyle}">—</td>
+        <td style="${valStyle} text-align:center;"${titleAttr}>${qaCell}</td>
+      </tr>`;
+    };
 
     const headerStyle = "padding:8px 12px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); border-bottom:2px solid #888; text-align:right; background:rgba(0,0,0,0.04);";
     const headerStyleCenter = headerStyle.replace('text-align:right','text-align:center');
-
-    // Fixed-value display row used for On Contract — the value
-    // comes from the CLINS-derived defaults (CLINS task order
-    // total minus $25K reconciliation), not editable.
-    const rowFixed = (label, value) => `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${label}</td>
-      <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(value)}</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${dashStyle}">—</td>
-      <td style="${valStyle} text-align:center;">${qaNone}</td>
-    </tr>`;
 
     // BY adjustment row uses a uniform BRIGHT red across ALL
     // cells (label, total, per-company, QA) to signal that BY
@@ -12196,8 +12312,8 @@ function renderVariationsSummary() {
             </tr>
           </thead>
           <tbody>
-            ${rowFixed(`${escapeHtml(rd)} On Contract`, onContract)}
-            ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField')}
+            ${rowInput(`${escapeHtml(rd)} On Contract`, onContract, 'onContract', getVarSummaryWorkbookValue(rd, 'onContract'))}
+            ${rowInput('Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs', fundedField, 'fundedField', getVarSummaryWorkbookValue(rd, 'fundedField'))}
             ${rowAdjByWithDetails('BY de-scope', adj.by)}
             ${rowAdjWithDetails('OY1 Adjustment', adj.oy1)}
             ${rowAdjWithDetails('OY2 Adjustment', adj.oy2)}
@@ -12250,13 +12366,13 @@ function renderVariationsSummary() {
     <div class="panel">
       <div class="panel-head">
         <h2>Site Variations Summary</h2>
-        <div class="meta">Per-RD contract rollup with per-company breakdown · QA verifies PIKA + TT + Battelle = Total (±$1)</div>
+        <div class="meta">Per-RD contract rollup with per-company breakdown · QA verifies PIKA + TT + Battelle = Total (±$1) · Contract input QA compares entered value to workbook "Contract Totals" tab</div>
         <div>
           <button class="nav-btn"
             style="${varSummaryShowDetails ? 'background: var(--accent); color: #fff; border-color: var(--accent);' : ''}"
             onclick="toggleVarSummaryDetails()"
             title="Show sub-rows under each year's adjustment with the Potential Descope and New Sites Cost components">${varSummaryShowDetails ? '✓ ' : ''}Show Details</button>
-          <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Reset Funded Field values to defaults">Reset Inputs</button>
+          <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Clear local overrides — values revert to workbook (Contract Totals) or hardcoded defaults">Reset Inputs</button>
         </div>
       </div>
       <div style="padding:18px;">
