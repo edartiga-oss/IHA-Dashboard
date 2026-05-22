@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v37</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v38</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12780,6 +12780,22 @@ function renderVariationsSummary() {
       const sum = p + t + b;
       return Math.abs(sum - rowTotal) <= 1 ? qaPass : qaFail;
     };
+    // Workbook-source pill. Compares the row's Total against the
+    // value parsed from the workbook's "Contract Totals" tab
+    // (when present). Returns qaNone if no workbook source is
+    // loaded for this RD/key, so a workbook without the tab keeps
+    // the existing em-dash. Uses a "WB" prefix so the pill is
+    // visually distinct from the sum-balance pill when both
+    // appear in the same QA cell.
+    const wbCheckPill = (value, wbValue) => {
+      if (wbValue == null) return qaNone;
+      const matches = Math.abs(Number(value) - wbValue) <= 1;
+      const wbStr = fmtVarSummaryMoney(wbValue);
+      const bg = matches ? '#d4edda' : '#f8d7da';
+      const fg = matches ? '#1e7e34' : '#c62828';
+      const sym = matches ? '✓' : '✗';
+      return `<span title="Workbook (Contract Totals): ${wbStr}" style="display:inline-block; padding:1px 6px; border-radius:10px; background:${bg}; color:${fg}; font-weight:700; font-size:11px; letter-spacing:0.5px;">WB${sym}</span>`;
+    };
     // Parent adjustment row — subtle bottom border separates each
     // year group from the next.
     const rowBorderStyle = 'border-bottom: 1px solid rgba(0,0,0,0.08);';
@@ -12946,37 +12962,47 @@ function renderVariationsSummary() {
     // Labor On-Contract row: PIKA is editable, TT and Battelle
     // are calculated from the funded-sites raw cost split (the
     // values that used to populate the On Contract row before
-    // this row existed). TOTAL auto-sums the three so the QA
-    // check always passes by construction.
+    // this row existed). TOTAL auto-sums the three so the
+    // sum-balance QA would always pass — instead we use the QA
+    // column to compare laborTotal against the workbook's
+    // "Funded Field w/ Per Diem but no PIKA G&A and ODCs" value
+    // from the Contract Totals tab (the workbook's labor-only
+    // figure). Sub-note carries that workbook verbiage so the
+    // user can see where the source figure comes from.
     const laborPika = getVarSummaryInput(rd, 'laborPika');
     const laborTT = fundedPerCo.tt;
     const laborBattelle = fundedPerCo.battelle;
     const laborTotal = laborPika + laborTT + laborBattelle;
+    const laborSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
     const rowLaborOnContract = `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">Labor On-Contract</td>
+      <td style="${labelStyle}">Labor On-Contract${laborSubNote}</td>
       <td style="${valStyle} font-weight:600; color:var(--ink);">${fmtVarSummaryMoney(laborTotal)}</td>
       ${editCell('laborPika', laborPika, PIKA_DARK)}
       <td style="${valStyleTT}">${fmtVarSummaryMoney(laborTT)}</td>
       <td style="${valStyleBattelle}">${fmtVarSummaryMoney(laborBattelle)}</td>
-      <td style="${valStyle} text-align:center;">${qaCheck(laborTotal, laborPika, laborTT, laborBattelle)}</td>
+      <td style="${valStyle} text-align:center;">${wbCheckPill(laborTotal, getVarSummaryWorkbookValue(rd, 'fundedField'))}</td>
     </tr>`;
 
     // RD On-Contract: all 4 columns editable so the user can
-    // enter contract figures directly. QA checks the sum. The
-    // sub-comment under the label preserves the verbiage from
-    // the former "Funded Field w/ Per Diem but no PIKA G&A and
-    // ODCs" row, which this row replaces.
+    // enter contract figures directly. QA cell shows the
+    // sum-balance pill plus (when the workbook's Contract Totals
+    // tab is loaded) a "WB ✓/✗" pill comparing the entered
+    // Total against the workbook's "On Contract" value.
     const onContractPika = getVarSummaryInput(rd, 'onContractPika');
     const onContractTT = getVarSummaryInput(rd, 'onContractTT');
     const onContractBattelle = getVarSummaryInput(rd, 'onContractBattelle');
-    const onContractSubNote = `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; color:var(--ink-mute); white-space:nowrap;">Funded Field w/ Per Diem but no PIKA G&amp;A and ODCs</div>`;
+    const onContractSumPill = qaCheck(onContract, onContractPika, onContractTT, onContractBattelle);
+    const onContractWbPill = wbCheckPill(onContract, getVarSummaryWorkbookValue(rd, 'onContract'));
+    const onContractQaCell = onContractWbPill === qaNone
+      ? onContractSumPill
+      : `${onContractSumPill}&nbsp;${onContractWbPill}`;
     const rowOnContract = `<tr style="${rowBorderStyle}">
-      <td style="${labelStyle}">${escapeHtml(rd)} On Contract${onContractSubNote}</td>
+      <td style="${labelStyle}">${escapeHtml(rd)} On Contract</td>
       ${editCell('onContract', onContract, '#a00')}
       ${editCell('onContractPika', onContractPika, PIKA_DARK)}
       ${editCell('onContractTT', onContractTT, TT_DARK)}
       ${editCell('onContractBattelle', onContractBattelle, BAT_DARK)}
-      <td style="${valStyle} text-align:center;">${qaCheck(onContract, onContractPika, onContractTT, onContractBattelle)}</td>
+      <td style="${valStyle} text-align:center; white-space:nowrap;">${onContractQaCell}</td>
     </tr>`;
 
     // BY adjustment row uses a uniform BRIGHT red across ALL
