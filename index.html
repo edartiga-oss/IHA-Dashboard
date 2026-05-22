@@ -2470,7 +2470,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v26</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v27</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12152,11 +12152,12 @@ function resetVarSummaryInputs() {
 // Computed adjustments per RD, sourced from allSites.
 // Returns an object with one entry per year (by / oy1 / oy2 /
 // oy3 / oy4), each of which has:
-//   { descope, newSites, total: { total, pika, tt, battelle } }
-// where descope and newSites each have the same shape (total +
-// per-company). total = descope + newSites — that's the displayed
-// "adjustment" for that year. Descopes are negative, new sites
-// positive, total signed.
+//   { descope, newSites, incurred, total: { total, pika, tt, battelle } }
+// where descope, newSites and incurred all have the same shape
+// (total + per-company). total = descope + newSites + incurred —
+// that's the displayed "adjustment" for that year. Descopes are
+// negative, new sites positive, incurred positive (cost already
+// spent on those same sites — partially offsets the descope).
 //
 // Per-year accounting reasoning: the contract adjustment for an
 // option year covers both directions — sites being descoped
@@ -12168,6 +12169,7 @@ function computeVarSummaryAdjustments(rd) {
   const emptyYear = () => ({
     descope:  empty(),
     newSites: empty(),
+    incurred: empty(),
     total:    empty(),
   });
   const rows = {
@@ -12184,6 +12186,15 @@ function computeVarSummaryAdjustments(rd) {
     subrow.pika     += sign * split.pika;
     subrow.tt       += sign * split.tt;
     subrow.battelle += sign * split.battelle;
+  };
+  const accumulateIncurred = (subrow, s) => {
+    const incurred = Number(s.incurredCost) || 0;
+    if (incurred === 0) return;
+    const split = computeIncurredPerCompany(s);
+    subrow.total    += incurred;
+    subrow.pika     += split.pika;
+    subrow.tt       += split.tt;
+    subrow.battelle += split.battelle;
   };
   const yearKey = (yr) => {
     if (yr === 'Base Year')     return 'by';
@@ -12204,6 +12215,10 @@ function computeVarSummaryAdjustments(rd) {
     if (isNew) {
       // NEW site — positive contribution to its year bucket.
       accumulate(rows[yk].newSites, +1, s);
+      // Incurred cost on this new site rolls into the year's
+      // incurred bucket — money already booked against the
+      // contract for this site.
+      accumulateIncurred(rows[yk].incurred, s);
     } else {
       // Existing scope-flagged sites contribute to descopes,
       // subject to the same exclusion logic the Scope Changes
@@ -12221,15 +12236,21 @@ function computeVarSummaryAdjustments(rd) {
       // BY — OY1-4 credit-funded sites still reduce contract.
       if (yk === 'by' && siteFundedWithCredit(s)) continue;
       accumulate(rows[yk].descope, -1, s);
+      // Descoped sites with already-incurred cost: the descope
+      // gives back the unspent portion, but the incurred piece
+      // is a real expense that partially offsets the descope.
+      accumulateIncurred(rows[yk].incurred, s);
     }
   }
-  // Roll up descope + newSites into the year's total adjustment.
+  // Roll up descope + newSites + incurred into the year's total
+  // adjustment. Incurred is signed positive so it offsets the
+  // negative descope (or adds to a positive new-sites figure).
   for (const yk of Object.keys(rows)) {
     const r = rows[yk];
-    r.total.total    = r.descope.total    + r.newSites.total;
-    r.total.pika     = r.descope.pika     + r.newSites.pika;
-    r.total.tt       = r.descope.tt       + r.newSites.tt;
-    r.total.battelle = r.descope.battelle + r.newSites.battelle;
+    r.total.total    = r.descope.total    + r.newSites.total    + r.incurred.total;
+    r.total.pika     = r.descope.pika     + r.newSites.pika     + r.incurred.pika;
+    r.total.tt       = r.descope.tt       + r.newSites.tt       + r.incurred.tt;
+    r.total.battelle = r.descope.battelle + r.newSites.battelle + r.incurred.battelle;
   }
   return rows;
 }
@@ -12606,14 +12627,19 @@ function renderVariationsSummary() {
         <td style="${valStyle} text-align:center;">${qaCheck(yearObj.total.total, yearObj.total.pika, yearObj.total.tt, yearObj.total.battelle)}</td>
       </tr>`;
       // Figure out which sub-row is "last visible" so the bottom
-      // border lands on the right one.
-      const descopeZero = yearObj.descope.total === 0 && yearObj.descope.pika === 0 && yearObj.descope.tt === 0 && yearObj.descope.battelle === 0;
-      const newSitesZero = yearObj.newSites.total === 0 && yearObj.newSites.pika === 0 && yearObj.newSites.tt === 0 && yearObj.newSites.battelle === 0;
-      const newSitesIsLast = !newSitesZero;
-      const descopeIsLast  = !descopeZero && newSitesZero;
+      // border lands on the right one. Order is Descope → New
+      // Sites → Incurred, so Incurred wins last-spot when present.
+      const isSubZero = sub => sub.total === 0 && sub.pika === 0 && sub.tt === 0 && sub.battelle === 0;
+      const descopeZero  = isSubZero(yearObj.descope);
+      const newSitesZero = isSubZero(yearObj.newSites);
+      const incurredZero = isSubZero(yearObj.incurred);
+      const incurredIsLast = !incurredZero;
+      const newSitesIsLast = !newSitesZero && incurredZero;
+      const descopeIsLast  = !descopeZero && newSitesZero && incurredZero;
       return parent
-        + rowSub('Potential Descope', yearObj.descope, descopeIsLast)
-        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast);
+        + rowSub('Potential Descope', yearObj.descope,  descopeIsLast)
+        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast)
+        + rowSub('Incurred Cost',     yearObj.incurred, incurredIsLast);
     };
     const rowInput = (label, value, key) => `<tr style="${rowBorderStyle}">
       <td style="${labelStyle}">${label}</td>
@@ -12673,13 +12699,17 @@ function renderVariationsSummary() {
         <td style="${valStyleByAll}">${fmtVarSummaryMoney(yearObj.total.battelle)}</td>
         <td style="${valStyle} text-align:center;">${qaCheck(yearObj.total.total, yearObj.total.pika, yearObj.total.tt, yearObj.total.battelle)}</td>
       </tr>`;
-      const descopeZero = yearObj.descope.total === 0 && yearObj.descope.pika === 0 && yearObj.descope.tt === 0 && yearObj.descope.battelle === 0;
-      const newSitesZero = yearObj.newSites.total === 0 && yearObj.newSites.pika === 0 && yearObj.newSites.tt === 0 && yearObj.newSites.battelle === 0;
-      const newSitesIsLast = !newSitesZero;
-      const descopeIsLast  = !descopeZero && newSitesZero;
+      const isSubZero = sub => sub.total === 0 && sub.pika === 0 && sub.tt === 0 && sub.battelle === 0;
+      const descopeZero  = isSubZero(yearObj.descope);
+      const newSitesZero = isSubZero(yearObj.newSites);
+      const incurredZero = isSubZero(yearObj.incurred);
+      const incurredIsLast = !incurredZero;
+      const newSitesIsLast = !newSitesZero && incurredZero;
+      const descopeIsLast  = !descopeZero && newSitesZero && incurredZero;
       return parent
-        + rowSub('Potential Descope', yearObj.descope, descopeIsLast)
-        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast);
+        + rowSub('Potential Descope', yearObj.descope,  descopeIsLast)
+        + rowSub('New Sites Cost',    yearObj.newSites, newSitesIsLast)
+        + rowSub('Incurred Cost',     yearObj.incurred, incurredIsLast);
     };
 
     return `
