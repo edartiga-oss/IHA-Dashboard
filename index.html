@@ -2868,15 +2868,37 @@ async function fetchWorkbookFromDrive() {
   const base = getCloudStateUrl();
   const url = base + (base.includes('?') ? '&' : '?') + 'action=masterFetch';
   const content = document.getElementById('content');
+  const t0 = performance.now();
   if (content) {
     content.innerHTML =
       '<div class="empty"><h2>Loading latest workbook from Drive…</h2>' +
-      '<p class="hint">Fetching the most recently modified .xlsx from the team folder.</p></div>';
+      '<p class="hint" id="cloudLoadProgress">Fetching the most recently modified .xlsx from the team folder.</p></div>';
   }
+  // Surfaces progress so the user can tell whether the wait is
+  // network (fetch) or local parsing (XLSX.read + parse*). The
+  // ticker just updates the elapsed-seconds line every 250ms.
+  const setProgress = (msg) => {
+    const el = document.getElementById('cloudLoadProgress');
+    if (el) el.textContent = msg;
+  };
+  let elapsedSec = 0;
+  const ticker = setInterval(() => {
+    elapsedSec += 0.25;
+    setProgress(`Fetching from Drive… ${elapsedSec.toFixed(1)}s elapsed`);
+  }, 250);
+  let timingOpen = false;
   try {
+    console.group('[workbook] cloud load timing');
+    timingOpen = true;
+    console.time('[workbook] total');
+    console.time('[workbook] fetch');
     const resp = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'follow' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
     const text = await resp.text();
+    console.timeEnd('[workbook] fetch');
+    clearInterval(ticker);
+    setProgress(`Fetched ${(text.length / 1024).toFixed(0)} KB in ${((performance.now() - t0) / 1000).toFixed(1)}s · decoding…`);
+    console.time('[workbook] json+decode');
     let parsed;
     try { parsed = JSON.parse(text); }
     catch (_) {
@@ -2894,10 +2916,20 @@ async function fetchWorkbookFromDrive() {
     const bin = atob(parsed.base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    console.timeEnd('[workbook] json+decode');
+    setProgress(`Decoded ${(bytes.length / 1024).toFixed(0)} KB · parsing workbook (UI may freeze briefly)…`);
     const displayName = parsed.name || 'Master IHA workbook (from Drive)';
+    // Yield to the browser so the progress message paints before
+    // the synchronous XLSX.read blocks the main thread.
+    await new Promise(r => setTimeout(r, 0));
     processWorkbookBuffer(bytes.buffer, displayName);
+    console.timeEnd('[workbook] total');
+    console.groupEnd();
+    timingOpen = false;
     return true;
   } catch (err) {
+    clearInterval(ticker);
+    if (timingOpen) { try { console.groupEnd(); } catch (_) {} }
     console.error('[workbook] fetch failed', err);
     const usingDefault = base === DEFAULT_CLOUD_STATE_URL;
     if (content) {
@@ -2966,22 +2998,30 @@ function handleFile(e) {
 }
 
 function processWorkbookBuffer(arrayBuffer, displayName) {
+    // Per-stage timings logged to the console so a slow load can
+    // be diagnosed at a glance (XLSX.read vs. any one parser).
+    const timed = (label, fn) => {
+      const t0 = performance.now();
+      const r = fn();
+      console.log(`[workbook] ${label}: ${(performance.now() - t0).toFixed(0)}ms`);
+      return r;
+    };
     try {
       const data = new Uint8Array(arrayBuffer);
-      const wb = XLSX.read(data, { type: 'array', cellDates: false });
+      const wb = timed('XLSX.read', () => XLSX.read(data, { type: 'array', cellDates: false }));
       if (!wb.SheetNames.includes(SHEET_NAME)) {
         document.getElementById('content').innerHTML =
           `<div class="empty"><h2>AllSites tab not found</h2><p>This workbook does not contain a sheet named "${SHEET_NAME}". Available sheets: ${wb.SheetNames.join(', ')}</p></div>`;
         return;
       }
-      parseAllSites(wb.Sheets[SHEET_NAME]);
-      parseSiteFinancials(wb);      // Joins per-RD financial columns onto allSites by ID
-      parsePOPs(wb.Sheets['POPs']); // Optional — gracefully no-ops if missing
-      parseWIP(wb);                 // Optional — reads per-RD sheets for WIP analysis
-      parsePM(wb);                  // Optional — reads PM dollars from WIP & Invoiceable Items tab
-      parseInvoice(wb);             // Optional — reads Invoice (Total Invoiceable for this Period)
-      parseReportStatus(wb);        // Optional — snapshots the Report Status sheet
-      parseContractTotals(wb);      // Optional — reads Contract Totals tab for On Contract / Funded Field values
+      timed('parseAllSites',       () => parseAllSites(wb.Sheets[SHEET_NAME]));
+      timed('parseSiteFinancials', () => parseSiteFinancials(wb));      // Joins per-RD financial columns onto allSites by ID
+      timed('parsePOPs',           () => parsePOPs(wb.Sheets['POPs'])); // Optional — gracefully no-ops if missing
+      timed('parseWIP',            () => parseWIP(wb));                 // Optional — reads per-RD sheets for WIP analysis
+      timed('parsePM',             () => parsePM(wb));                  // Optional — reads PM dollars from WIP & Invoiceable Items tab
+      timed('parseInvoice',        () => parseInvoice(wb));             // Optional — reads Invoice (Total Invoiceable for this Period)
+      timed('parseReportStatus',   () => parseReportStatus(wb));        // Optional — snapshots the Report Status sheet
+      timed('parseContractTotals', () => parseContractTotals(wb));      // Optional — reads Contract Totals tab for On Contract / Funded Field values
       // Reset the fallback dedup log so it fires fresh for the new
       // workbook. Without this, a second load in the same session
       // wouldn't show fallbacks for any sites already logged.
