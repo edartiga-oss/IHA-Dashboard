@@ -2450,7 +2450,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v22</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v23</span>
     <span class="app-version" id="stateBadge" title="Cloud state not synced yet" style="display:none;"></span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
@@ -12236,20 +12236,44 @@ function renderVariationsSummary() {
     fundedField: 0,
     postAdjustments: 0,
     netAdjPika: 0, netAdjTT: 0, netAdjBattelle: 0,
+    // BY de-scope is netted out of the per-RD Total and the grand
+    // Post Adjustments / Net Adjustment cells, then surfaced as a
+    // sub-note so the excluded amount stays visible. Mirrors v22
+    // on the Site Variations tab. byPart values are signed the
+    // same way computeDescopePerCompany feeds them — descope is
+    // negative; any rare BY new-site contribution is positive.
+    byPart: { total: 0, pika: 0, tt: 0, battelle: 0 },
+  };
+
+  // Renders the sub-line text under a Total cell. Always labels
+  // BY de-scope (the overwhelmingly common case); flips to
+  // "BY Addition" only if the BY net is positive. Hidden when
+  // the BY portion is effectively zero.
+  const bySubNote = (v, color) => {
+    const n = Number(v) || 0;
+    if (Math.abs(n) < 0.005) return '';
+    const word = n < 0 ? 'De-scope' : 'Addition';
+    const c = color || 'var(--ink-mute)';
+    return `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:2px; opacity:0.78; white-space:nowrap; color:${c};">BY ${word} of ${fmtVarSummaryMoney(Math.abs(n))}</div>`;
   };
 
   const rdSectionsHtml = VAR_SUMMARY_RD_ORDER.map(rd => {
     const onContract  = getVarSummaryInput(rd, 'onContract');
     const fundedField = getVarSummaryInput(rd, 'fundedField');
     const adj = computeVarSummaryAdjustments(rd);
-    // Total = Funded Field + sum of per-year adjustments (each
-    // year's adjustment already nets descope + new sites).
-    const total = fundedField + adj.by.total.total + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
-    // Per-company sums of all per-year adjustments. Used for the
+    // Per-RD Total / per-company Net Adjustments now EXCLUDE the
+    // BY year. BY de-scope is "official" contract money already
+    // off the books — pulling it out leaves the live, still-in-
+    // play working figure as the headline value. The BY portion
+    // appears as a sub-note on each cell. Mirrors the v22 TOTALS
+    // row on the Site Variations tab.
+    const byPart = adj.by.total;
+    const total = fundedField + adj.oy1.total.total + adj.oy2.total.total + adj.oy3.total.total + adj.oy4.total.total;
+    // Per-company sums of OY1-4 adjustments only. Used for the
     // per-company Total cells + bottom rollup.
-    const netAdjPika     = adj.by.total.pika     + adj.oy1.total.pika     + adj.oy2.total.pika     + adj.oy3.total.pika     + adj.oy4.total.pika;
-    const netAdjTT       = adj.by.total.tt       + adj.oy1.total.tt       + adj.oy2.total.tt       + adj.oy3.total.tt       + adj.oy4.total.tt;
-    const netAdjBattelle = adj.by.total.battelle + adj.oy1.total.battelle + adj.oy2.total.battelle + adj.oy3.total.battelle + adj.oy4.total.battelle;
+    const netAdjPika     = adj.oy1.total.pika     + adj.oy2.total.pika     + adj.oy3.total.pika     + adj.oy4.total.pika;
+    const netAdjTT       = adj.oy1.total.tt       + adj.oy2.total.tt       + adj.oy3.total.tt       + adj.oy4.total.tt;
+    const netAdjBattelle = adj.oy1.total.battelle + adj.oy2.total.battelle + adj.oy3.total.battelle + adj.oy4.total.battelle;
 
     grandTotals.fullContract     += onContract;
     grandTotals.fundedField      += fundedField;
@@ -12257,6 +12281,10 @@ function renderVariationsSummary() {
     grandTotals.netAdjPika       += netAdjPika;
     grandTotals.netAdjTT         += netAdjTT;
     grandTotals.netAdjBattelle   += netAdjBattelle;
+    grandTotals.byPart.total     += byPart.total;
+    grandTotals.byPart.pika      += byPart.pika;
+    grandTotals.byPart.tt        += byPart.tt;
+    grandTotals.byPart.battelle  += byPart.battelle;
 
     const tint = VAR_SUMMARY_RD_TINT[rd] || '#f7f7f7';
     // Color palette for per-company columns. Header gets the bold
@@ -12436,10 +12464,10 @@ function renderVariationsSummary() {
             ${rowAdjWithDetails('OY4 Adjustment', adj.oy4)}
             <tr style="border-top:2px solid #555; background:rgba(0,0,0,0.05);">
               <td style="${labelStyleDark} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px;">Total</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px;">${fmtVarSummaryMoney(total)}</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${PIKA_DARK};">${fmtVarSummaryMoney(netAdjPika)}</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${TT_DARK};">${fmtVarSummaryMoney(netAdjTT)}</td>
-              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${BAT_DARK};">${fmtVarSummaryMoney(netAdjBattelle)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px;">${fmtVarSummaryMoney(total)}${bySubNote(byPart.total)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${PIKA_DARK};">${fmtVarSummaryMoney(netAdjPika)}${bySubNote(byPart.pika, PIKA_DARK)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${TT_DARK};">${fmtVarSummaryMoney(netAdjTT)}${bySubNote(byPart.tt, TT_DARK)}</td>
+              <td style="${valStyle} font-weight:700; padding-top:8px; padding-bottom:8px; font-size:14px; color:${BAT_DARK};">${fmtVarSummaryMoney(netAdjBattelle)}${bySubNote(byPart.battelle, BAT_DARK)}</td>
               <td style="${valStyle} text-align:center; padding-top:8px; padding-bottom:8px;">${qaCheck(total - fundedField, netAdjPika, netAdjTT, netAdjBattelle)}</td>
             </tr>
           </tbody>
@@ -12463,7 +12491,7 @@ function renderVariationsSummary() {
         </tr>
         <tr style="border-bottom:2px solid #555;">
           <td style="padding:6px 12px; text-align:right; font-weight:700; font-family:'IBM Plex Sans',sans-serif; font-size:13px;">Post Adjustments</td>
-          <td style="padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:700; color:#a00;">${fmtVarSummaryMoney(grandTotals.postAdjustments)}</td>
+          <td style="padding:6px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:700; color:#a00;">${fmtVarSummaryMoney(grandTotals.postAdjustments)}${bySubNote(grandTotals.byPart.total, '#a00')}</td>
         </tr>
         <tr>
           <td style="padding:6px 12px; text-align:right; font-weight:600; font-family:'IBM Plex Sans',sans-serif; font-size:13px; padding-top:8px;">Net Adjustment per Company</td>
@@ -12471,6 +12499,13 @@ function renderVariationsSummary() {
             <span style="color:#1d4ed8; font-weight:700; margin-right:16px;">PIKA ${fmtVarSummaryMoney(grandTotals.netAdjPika)}</span>
             <span style="color:#b91c1c; font-weight:700; margin-right:16px;">TT ${fmtVarSummaryMoney(grandTotals.netAdjTT)}</span>
             <span style="color:#6b21a8; font-weight:700;">Battelle ${fmtVarSummaryMoney(grandTotals.netAdjBattelle)}</span>
+            ${(Math.abs(grandTotals.byPart.pika) + Math.abs(grandTotals.byPart.tt) + Math.abs(grandTotals.byPart.battelle)) >= 0.005
+              ? `<div style="font-size:10px; font-weight:500; font-style:italic; margin-top:4px; opacity:0.78; white-space:nowrap;">
+                  <span style="color:#1d4ed8; margin-right:16px;">BY ${grandTotals.byPart.pika < 0 ? 'De-scope' : 'Addition'} ${fmtVarSummaryMoney(Math.abs(grandTotals.byPart.pika))}</span>
+                  <span style="color:#b91c1c; margin-right:16px;">BY ${grandTotals.byPart.tt < 0 ? 'De-scope' : 'Addition'} ${fmtVarSummaryMoney(Math.abs(grandTotals.byPart.tt))}</span>
+                  <span style="color:#6b21a8;">BY ${grandTotals.byPart.battelle < 0 ? 'De-scope' : 'Addition'} ${fmtVarSummaryMoney(Math.abs(grandTotals.byPart.battelle))}</span>
+                </div>`
+              : ''}
           </td>
         </tr>
       </table>
