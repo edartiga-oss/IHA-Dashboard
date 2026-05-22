@@ -2474,7 +2474,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v44</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v45</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -12588,6 +12588,115 @@ function computeVarSummaryDiff() {
   return sections;
 }
 
+// Builds the inner HTML for the Contract Totals source panel.
+// Returns the table when parseContractTotals() populated values,
+// or a diagnostic block (sheet matched / labels seen / all sheet
+// names) when it couldn't. Returns an empty-state string when no
+// workbook is loaded. Used by showContractTotalsSource() to fill
+// the popup modal.
+function buildContractTotalsSourceHtml() {
+  if (!allSites || allSites.length === 0) {
+    return `<p style="color:var(--ink-mute);">No workbook loaded. Load a workbook to see the Contract Totals source values.</p>`;
+  }
+  const wbRows = VAR_SUMMARY_RD_ORDER
+    .map(rd => ({ rd, wb: contractTotalsFromWorkbook[rd] }))
+    .filter(x => x.wb && (x.wb.onContract != null || x.wb.fundedField != null));
+  if (wbRows.length > 0) {
+    const PIKA_C = '#1d4ed8', TT_C = '#b91c1c', BAT_C = '#6b21a8';
+    const cellTd = 'padding:3px 16px; text-align:right; font-family:\'IBM Plex Mono\',monospace;';
+    const fmtCell = (n, color) => n != null
+      ? `<td style="${cellTd} color:${color};">${fmtVarSummaryMoney(n)}</td>`
+      : `<td style="${cellTd} color:var(--ink-mute);">—</td>`;
+    return `
+      <table style="border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px;">
+        <thead>
+          <tr>
+            <th style="text-align:left; padding:4px 16px 4px 0; color:var(--ink-mute); font-weight:600;">RD / MSC</th>
+            <th style="text-align:left; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Row</th>
+            <th style="text-align:right; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Total</th>
+            <th style="text-align:right; padding:4px 16px; color:${PIKA_C}; font-weight:700;">PIKA</th>
+            <th style="text-align:right; padding:4px 16px; color:${TT_C}; font-weight:700;">Tetra Tech</th>
+            <th style="text-align:right; padding:4px 0 4px 16px; color:${BAT_C}; font-weight:700;">Battelle</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${wbRows.map(({ rd, wb }) => {
+            const ocBy = wb.onContractByCo || {};
+            const ffBy = wb.fundedFieldByCo || {};
+            const ocRow = wb.onContractRow ? `<span style="color:var(--ink-mute); font-weight:400; margin-left:6px;">row ${wb.onContractRow}</span>` : '';
+            const ffRow = wb.fundedFieldRow ? `<span style="color:var(--ink-mute); font-weight:400; margin-left:6px;">row ${wb.fundedFieldRow}</span>` : '';
+            return `
+              <tr style="border-top:1px solid rgba(0,0,0,0.08);">
+                <td rowspan="2" style="padding:3px 16px 3px 0; color:var(--ink); font-weight:700; vertical-align:top;">${escapeHtml(rd)}</td>
+                <td style="padding:3px 16px; color:var(--ink); font-size:11px;">On Contract${ocRow}</td>
+                ${fmtCell(wb.onContract, 'var(--ink)')}
+                ${fmtCell(ocBy.pika, PIKA_C)}
+                ${fmtCell(ocBy.tt, TT_C)}
+                ${fmtCell(ocBy.battelle, BAT_C)}
+              </tr>
+              <tr>
+                <td style="padding:3px 16px; color:var(--ink); font-size:11px; font-style:italic;">Labor (Funded Field)${ffRow}</td>
+                ${fmtCell(wb.fundedField, 'var(--ink)')}
+                ${fmtCell(ffBy.pika, PIKA_C)}
+                ${fmtCell(ffBy.tt, TT_C)}
+                ${fmtCell(ffBy.battelle, BAT_C)}
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+      <div style="font-size:11px; color:var(--ink-mute); margin-top:12px; font-style:italic;">
+        Cells in the Site Variations Summary rows below are red-bordered when they differ from these source values.
+      </div>
+    `;
+  }
+  if (contractTotalsParseInfo) {
+    const info = contractTotalsParseInfo;
+    const sheetLine = info.sheetName
+      ? `<div style="font-size:12px; color:var(--ink);">Sheet matched: <strong>${escapeHtml(info.sheetName)}</strong></div>`
+      : `<div style="font-size:12px; color:#c62828; font-weight:600;">No sheet matched (looking for any sheet name containing "contract" and "totals").</div>`;
+    const labelsLine = info.labelsSeen && info.labelsSeen.length
+      ? `<div style="font-size:11px; color:var(--ink-mute); margin-top:6px;">Labels seen (looking for "On Contract" / "Funded Field"):
+          <ul style="margin:4px 0 0 18px; padding:0; font-family:'IBM Plex Mono',monospace;">
+            ${info.labelsSeen.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
+          </ul>
+        </div>`
+      : (info.sheetName
+          ? `<div style="font-size:11px; color:var(--ink-mute); margin-top:6px;">No cells containing "On Contract" or "Funded Field" found in any column of that sheet.</div>`
+          : '');
+    const sheetsLine = `<div style="font-size:11px; color:var(--ink-mute); margin-top:8px;">Sheets in workbook: <code style="word-break:break-all;">${escapeHtml((info.allSheetNames || []).join(', '))}</code></div>`;
+    return sheetLine + labelsLine + sheetsLine;
+  }
+  return `<p style="color:var(--ink-mute);">No Contract Totals tab parsed yet.</p>`;
+}
+
+// Open the Contract Totals Source modal — shows what the parser
+// pulled from the workbook's "Contract Totals" tab so the user
+// can verify the source-of-truth figures without inline clutter
+// on the Site Variations Summary view.
+function showContractTotalsSource() {
+  const overlay = document.createElement('div');
+  overlay.className = 'var-diff-overlay';
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  overlay.innerHTML = `
+    <div class="var-diff-modal" style="max-width:900px;" onclick="event.stopPropagation()">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px;">
+        <div>
+          <h2 style="margin:0; font-family:'DM Serif Display',serif;">Contract Totals Source</h2>
+          <div style="font-size:12px; color:var(--ink-mute); margin-top:2px;">
+            Values parsed from the workbook's "Contract Totals" tab. These pre-fill the editable inputs on the Site Variations Summary below and back the WB ✓ / ✗ mismatch checks.
+          </div>
+        </div>
+        <button class="nav-btn" onclick="this.closest('.var-diff-overlay').remove()" style="white-space:nowrap;">✕ Close</button>
+      </div>
+      ${buildContractTotalsSourceHtml()}
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
 function showVariationsSummaryDiff() {
   if (!allSites || allSites.length === 0) return;
   const sections = computeVarSummaryDiff();
@@ -13163,95 +13272,11 @@ function renderVariationsSummary() {
     </div>
   `;
 
-  // Contract Totals source-of-truth panel. Always renders so the
-  // user can see what parseContractTotals() saw (or didn't see)
-  // in the loaded workbook — values when present, otherwise a
-  // diagnostic explaining what's missing (sheet name not found,
-  // sheet found but labels didn't match, etc.) so they can
-  // either rename the tab/labels or tell us how to adjust the
-  // parser.
-  const wbRows = VAR_SUMMARY_RD_ORDER
-    .map(rd => ({ rd, wb: contractTotalsFromWorkbook[rd] }))
-    .filter(x => x.wb && (x.wb.onContract != null || x.wb.fundedField != null));
-  const wrapPanel = (inner) => `
-    <div style="margin:18px 18px 0; padding:12px 16px; background:rgba(0,0,0,0.03); border:1px solid var(--line); border-radius:4px;">
-      <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--ink-mute); margin-bottom:8px;">
-        Contract Totals · source: workbook "Contract Totals" tab
-      </div>
-      ${inner}
-    </div>
-  `;
-  let contractTotalsPanelHtml = '';
-  if (wbRows.length > 0) {
-    // Per-RD block with two rows (On Contract + Labor / Funded
-    // Field). Total + 3 per-company columns. Per-company cells
-    // use the same brand colors as the rest of the dashboard so
-    // PIKA reads blue, TT dark red, Battelle purple.
-    const PIKA_C = '#1d4ed8', TT_C = '#b91c1c', BAT_C = '#6b21a8';
-    const cellTd = 'padding:3px 16px; text-align:right; font-family:\'IBM Plex Mono\',monospace;';
-    const fmtCell = (n, color) => n != null
-      ? `<td style="${cellTd} color:${color};">${fmtVarSummaryMoney(n)}</td>`
-      : `<td style="${cellTd} color:var(--ink-mute);">—</td>`;
-    contractTotalsPanelHtml = wrapPanel(`
-      <table style="border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px;">
-        <thead>
-          <tr>
-            <th style="text-align:left; padding:4px 16px 4px 0; color:var(--ink-mute); font-weight:600;">RD / MSC</th>
-            <th style="text-align:left; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Row</th>
-            <th style="text-align:right; padding:4px 16px; color:var(--ink-mute); font-weight:600;">Total</th>
-            <th style="text-align:right; padding:4px 16px; color:${PIKA_C}; font-weight:700;">PIKA</th>
-            <th style="text-align:right; padding:4px 16px; color:${TT_C}; font-weight:700;">Tetra Tech</th>
-            <th style="text-align:right; padding:4px 0 4px 16px; color:${BAT_C}; font-weight:700;">Battelle</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${wbRows.map(({ rd, wb }) => {
-            const ocBy = wb.onContractByCo || {};
-            const ffBy = wb.fundedFieldByCo || {};
-            const ocRow = wb.onContractRow ? `<span style="color:var(--ink-mute); font-weight:400; margin-left:6px;">row ${wb.onContractRow}</span>` : '';
-            const ffRow = wb.fundedFieldRow ? `<span style="color:var(--ink-mute); font-weight:400; margin-left:6px;">row ${wb.fundedFieldRow}</span>` : '';
-            return `
-              <tr style="border-top:1px solid rgba(0,0,0,0.08);">
-                <td rowspan="2" style="padding:3px 16px 3px 0; color:var(--ink); font-weight:700; vertical-align:top;">${escapeHtml(rd)}</td>
-                <td style="padding:3px 16px; color:var(--ink); font-size:11px;">On Contract${ocRow}</td>
-                ${fmtCell(wb.onContract, 'var(--ink)')}
-                ${fmtCell(ocBy.pika, PIKA_C)}
-                ${fmtCell(ocBy.tt, TT_C)}
-                ${fmtCell(ocBy.battelle, BAT_C)}
-              </tr>
-              <tr>
-                <td style="padding:3px 16px; color:var(--ink); font-size:11px; font-style:italic;">Labor (Funded Field)${ffRow}</td>
-                ${fmtCell(wb.fundedField, 'var(--ink)')}
-                ${fmtCell(ffBy.pika, PIKA_C)}
-                ${fmtCell(ffBy.tt, TT_C)}
-                ${fmtCell(ffBy.battelle, BAT_C)}
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-      <div style="font-size:11px; color:var(--ink-mute); margin-top:8px; font-style:italic;">
-        QA pills (WB ✓ / WB ✗) compare entered Totals against these.
-      </div>
-    `);
-  } else if (contractTotalsParseInfo) {
-    // Workbook was loaded but no values parsed — show why.
-    const info = contractTotalsParseInfo;
-    const sheetLine = info.sheetName
-      ? `<div style="font-size:12px; color:var(--ink);">Sheet matched: <strong>${escapeHtml(info.sheetName)}</strong></div>`
-      : `<div style="font-size:12px; color:#c62828; font-weight:600;">No sheet matched (looking for any sheet name containing "contract" and "totals").</div>`;
-    const labelsLine = info.labelsSeen && info.labelsSeen.length
-      ? `<div style="font-size:11px; color:var(--ink-mute); margin-top:6px;">Labels seen (looking for "On Contract" / "Funded Field"):
-          <ul style="margin:4px 0 0 18px; padding:0; font-family:'IBM Plex Mono',monospace;">
-            ${info.labelsSeen.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
-          </ul>
-        </div>`
-      : (info.sheetName
-          ? `<div style="font-size:11px; color:var(--ink-mute); margin-top:6px;">No cells containing "On Contract" or "Funded Field" found in any column of that sheet.</div>`
-          : '');
-    const sheetsLine = `<div style="font-size:11px; color:var(--ink-mute); margin-top:8px;">Sheets in workbook: <code style="word-break:break-all;">${escapeHtml((info.allSheetNames || []).join(', '))}</code></div>`;
-    contractTotalsPanelHtml = wrapPanel(sheetLine + labelsLine + sheetsLine);
-  }
+  // Contract Totals source-of-truth view is now opened via the
+  // "Contract Totals Source" button in the panel head (see
+  // showContractTotalsSource() / buildContractTotalsSourceHtml()).
+  // The inline panel was retired so the summary view starts with
+  // the per-RD tables rather than a recap of workbook source data.
 
   document.getElementById('viewMain').innerHTML = `
     <div class="panel">
@@ -13264,10 +13289,10 @@ function renderVariationsSummary() {
             onclick="toggleVarSummaryDetails()"
             title="Show sub-rows under each year's adjustment with the Potential Descope and New Sites Cost components">${varSummaryShowDetails ? '✓ ' : ''}Show Details</button>
           <button class="nav-btn" onclick="resetVarSummaryInputs()" title="Clear local overrides — values revert to workbook (Contract Totals) or hardcoded defaults">Reset Inputs</button>
+          <button class="nav-btn" onclick="showContractTotalsSource()" title="Show what parseContractTotals() pulled from the workbook's Contract Totals tab — the values that pre-fill the inputs below and back the WB ✗ mismatch highlights">Contract Totals Source</button>
           <button class="nav-btn" onclick="showVariationsSummaryDiff()" title="Diagnostic: compare the descope site set used here vs the Site Variations tab's Scope Changes section">Diff with Variations</button>
         </div>
       </div>
-      ${contractTotalsPanelHtml}
       <div style="padding:18px;">
         ${rdSectionsHtml}
         ${bottomTotalsHtml}
