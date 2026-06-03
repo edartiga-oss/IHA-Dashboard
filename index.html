@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v57</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v58</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -4375,12 +4375,29 @@ function getPeriodMonthCount() {
   if (!invoiceData) return 1;
   const period = invoiceData.period;
   if (!(period.start instanceof Date) || !(period.end instanceof Date)) return 1;
-  const startY = period.start.getUTCFullYear();
-  const startM = period.start.getUTCMonth();
-  const endY   = period.end.getUTCFullYear();
-  const endM   = period.end.getUTCMonth();
-  const months = (endY - startY) * 12 + (endM - startM) + 1;
-  return Math.max(1, months);
+  // Count a month only when MORE THAN 20 days of that month fall
+  // inside the period. A tail like "May 1 – June 2" should bill
+  // one month of PM (May), not two — only 2 days of June were
+  // worked, which isn't enough to take on the additional month's
+  // PM cost yet. Floor of 1 so very short periods still bill at
+  // least one month.
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  let count = 0;
+  let y = period.start.getUTCFullYear();
+  let m = period.start.getUTCMonth();
+  const endY = period.end.getUTCFullYear();
+  const endM = period.end.getUTCMonth();
+  while (y < endY || (y === endY && m <= endM)) {
+    const monthStart = new Date(Date.UTC(y, m, 1));
+    const monthEnd   = new Date(Date.UTC(y, m + 1, 0));
+    const clipStart = monthStart < period.start ? period.start : monthStart;
+    const clipEnd   = monthEnd   > period.end   ? period.end   : monthEnd;
+    const days = Math.floor((clipEnd - clipStart) / MS_PER_DAY) + 1;
+    if (days > 20) count++;
+    m++;
+    if (m > 11) { m = 0; y++; }
+  }
+  return Math.max(1, count);
 }
 
 function computeInvoiceByMonth(companyFilter) {
