@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v58</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v59</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -4504,10 +4504,9 @@ function computeInvoiceByMonth(companyFilter) {
   // monthly retainer in the source workbook, so each month gets the
   // same amount regardless of how many months the period spans.
   const pmShareForMonth = (rd, company) => {
-    let total = 0;
-    if (company === 'All') total = (invoiceData.pm.top && invoiceData.pm.top[rd]) || 0;
-    else                   total = (invoiceData.pm[company] && invoiceData.pm[company][rd]) || 0;
-    return total;
+    return company === 'All'
+      ? getPmMonthlyForRd(rd)
+      : getPmMonthlyForRdCo(rd, company);
   };
 
   const byRd = {};
@@ -4755,13 +4754,14 @@ function computeInvoiceByClin(companyFilter) {
   const RD_ORDER = ['63rd', '81st', '99th', '9th MSC'];
   for (const rd of RD_ORDER) {
     if (!invoiceData.rawByRd[rd]) continue;
-    // Pull the period's PM dollars for this RD under the company filter
-    let pmTotal = 0;
-    if (companyFilter === 'All') {
-      pmTotal = ((invoiceData.pm.top && invoiceData.pm.top[rd]) || 0) * monthsInPeriod;
-    } else {
-      pmTotal = ((invoiceData.pm[companyFilter] && invoiceData.pm[companyFilter][rd]) || 0) * monthsInPeriod;
-    }
+    // Pull the period's PM dollars for this RD under the company
+    // filter. Monthly retainer = CLINS annual for the period's
+    // OY / 12 (see getPmMonthlyForRd above for the source-of-truth
+    // rationale).
+    const pmMonthly = companyFilter === 'All'
+      ? getPmMonthlyForRd(rd)
+      : getPmMonthlyForRdCo(rd, companyFilter);
+    const pmTotal = pmMonthly * monthsInPeriod;
     if (pmTotal === 0) continue;
 
     // Determine the dominant year section among CLINs contributing
@@ -5971,7 +5971,7 @@ function renderInvoice() {
   const topTotals = { pscCount: 0, pscDollars: 0, repCount: 0, repDollars: 0, pm: 0, total: 0 };
   rdsAvailable.forEach(rd => {
     const v = invoiceData.byRd[rd];
-    const pmVal = ((invoiceData.pm.top && invoiceData.pm.top[rd]) || 0) * monthsInPeriod;
+    const pmVal = getPmMonthlyForRd(rd) * monthsInPeriod;
     const rowTotal = v.pscDollars + v.repDollars + pmVal;
     topTotals.pscCount  += v.pscCount;
     topTotals.pscDollars += v.pscDollars;
@@ -5984,7 +5984,7 @@ function renderInvoice() {
   // Top table HTML
   const topRows = rdsAvailable.map(rd => {
     const v = invoiceData.byRd[rd];
-    const pmVal = ((invoiceData.pm.top && invoiceData.pm.top[rd]) || 0) * monthsInPeriod;
+    const pmVal = getPmMonthlyForRd(rd) * monthsInPeriod;
     const rowTotal = v.pscDollars + v.repDollars + pmVal;
     const cls = rdClass(rd);
     return `
@@ -6011,8 +6011,10 @@ function renderInvoice() {
     let rowTotalSum = 0;
     const companyRows = rdsAvailable.map(rd => {
       const cells = accessor(rd);
-      // PM is a flat monthly retainer — scale by months in period
-      const pmVal = ((invoiceData.pm[label] && invoiceData.pm[label][rd]) || 0) * monthsInPeriod;
+      // PM is a flat monthly retainer — scale by months in period.
+      // Monthly figure comes from CLINS (annual / 12) with the
+      // workbook's per-company ratio applied; see getPmMonthlyForRdCo.
+      const pmVal = getPmMonthlyForRdCo(rd, label) * monthsInPeriod;
       const rowVals = [...cells, pmVal];
       const rowTotal = rowVals.reduce((a, b) => a + b, 0);
       rowTotalSum += rowTotal;
@@ -7390,6 +7392,117 @@ const CLIN_YEAR_SECTION = {
   'Option Year 4': '4001',
   'OY 4':          '4001',
 };
+
+// Per-RD annual Project Management dollars from the CLINS task
+// orders (W912DY-20-D-0019). Sourced directly from the Price
+// Spreadsheets in each task order PDF:
+//   63rd  → 0001Ab/Ac/Ad/Ae/Af (W912DY21F0584)
+//   81st  → 0001AB/AC/AD/AE/AF (W912DY21F0565)
+//   99th  → 0001AB/AC/AD/AE/AF (W912DY21F0630)
+//   9th MSC → 0001AB/AC/AD/AE/AF (W912DY21F0652)
+// CLIN 0001AA ("Project Management Plan") is a one-time line, not
+// monthly recurring, so it's excluded. The dashboard divides these
+// by 12 to get the monthly retainer used on the Invoice tab —
+// authoritative numbers vs. the workbook's WIP & Invoiceable
+// Items tab which can drift between OY transitions.
+const CLINS_PM_ANNUAL = {
+  '63rd':    { BY: 114488, OY1:  94999, OY2:  97375, OY3:  99844, OY4: 100075 },
+  '81st':    { BY: 152348, OY1: 155214, OY2: 159093, OY3: 163126, OY4: 163486 },
+  '99th':    { BY: 152456, OY1:  94999, OY2:  97375, OY3:  99844, OY4: 100075 },
+  '9th MSC': { BY:  41753, OY1:  26936, OY2:  27609, OY3:  31656, OY4:  31713 },
+};
+
+// CLIN year-section prefix → contract year label, used to map the
+// dashboard's existing dominant-year detection (which reports
+// year sections like '3001') onto the CLINS_PM_ANNUAL keys.
+const YS_TO_OY_LABEL = {
+  '0003': 'BY',
+  '1001': 'OY1',
+  '2001': 'OY2',
+  '3001': 'OY3',
+  '4001': 'OY4',
+};
+
+// Determine which OY an RD's invoice period falls under, by
+// counting CLIN year sections of sites with any submittal date
+// (PSC / PSC-Accept / Draft / Final IHA) inside the period.
+// Mirrors the dominant-year heuristic already used by the
+// by-CLIN PM attribution in computeInvoiceByClin. Falls back to
+// the most-frequent year section across ALL sites for the RD if
+// none have period activity; finally to null if the RD has no
+// sites at all.
+function getDominantOyForRdInPeriod(rd) {
+  if (!invoiceData || !invoiceData.rawByRd || !invoiceData.rawByRd[rd]) return null;
+  const period = invoiceData.period;
+  if (!period || !(period.start instanceof Date) || !(period.end instanceof Date)) return null;
+  const rawById = new Map();
+  for (const r of invoiceData.rawByRd[rd]) rawById.set(r.id, r);
+  const inPeriod = (serial) => {
+    if (serial == null) return false;
+    const d = excelToDate(serial);
+    return d instanceof Date && d >= period.start && d <= period.end;
+  };
+  const counts = {};
+  for (const s of allSites) {
+    if (s.rd !== rd) continue;
+    const raw = rawById.get(s.id);
+    if (!raw) continue;
+    if (!inPeriod(raw.psc) && !inPeriod(raw.pscAccept)
+        && !inPeriod(raw.draft) && !inPeriod(raw.ihaApp)) continue;
+    const clin = getCLIN(s);
+    if (!clin) continue;
+    const ys = clin.substring(0, 4);
+    if (!YS_TO_OY_LABEL[ys]) continue;
+    counts[ys] = (counts[ys] || 0) + 1;
+  }
+  // No period activity → fall back to dominant year across all
+  // sites for this RD so the Invoice tab still shows the right
+  // OY's PM when the period happens to fall in a quiet stretch.
+  if (Object.keys(counts).length === 0) {
+    for (const s of allSites) {
+      if (s.rd !== rd) continue;
+      const clin = getCLIN(s);
+      if (!clin) continue;
+      const ys = clin.substring(0, 4);
+      if (!YS_TO_OY_LABEL[ys]) continue;
+      counts[ys] = (counts[ys] || 0) + 1;
+    }
+  }
+  let bestYs = null, bestCnt = -1;
+  for (const [ys, cnt] of Object.entries(counts)) {
+    if (cnt > bestCnt || (cnt === bestCnt && (bestYs == null || ys > bestYs))) {
+      bestYs = ys;
+      bestCnt = cnt;
+    }
+  }
+  return bestYs ? YS_TO_OY_LABEL[bestYs] : null;
+}
+
+// PM monthly dollars for an RD = CLINS annual for the period's
+// OY / 12. Returns 0 when the RD isn't in CLINS_PM_ANNUAL or no
+// dominant OY can be determined.
+function getPmMonthlyForRd(rd) {
+  const oy = getDominantOyForRdInPeriod(rd);
+  if (!oy) return 0;
+  const annual = CLINS_PM_ANNUAL[rd] && CLINS_PM_ANNUAL[rd][oy];
+  return annual != null ? annual / 12 : 0;
+}
+
+// Per-company PM monthly. CLINS gives only the total contract
+// PM; the company split (PIKA / TT / Battelle) comes from the
+// workbook's intra-team allocation in pm.PIKA/TT/Battelle. We
+// keep that ratio but scale to the CLINS total, so per-company
+// PM stays proportional to whatever the workbook tracks while
+// the headline figure matches the contract source.
+function getPmMonthlyForRdCo(rd, company) {
+  const total = getPmMonthlyForRd(rd);
+  if (total === 0) return 0;
+  if (!company || company === 'All' || company === 'top') return total;
+  const wbTop = (invoiceData.pm.top && invoiceData.pm.top[rd]) || 0;
+  if (wbTop === 0) return 0;
+  const wbCo = (invoiceData.pm[company] && invoiceData.pm[company][rd]) || 0;
+  return total * (wbCo / wbTop);
+}
 
 // Per-RD state→letter maps + catch-all for Priority 2s & 3s.
 // Sourced from the price spreadsheets in the task order PDFs:
