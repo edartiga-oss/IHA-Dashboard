@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v59</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v60</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -7423,59 +7423,82 @@ const YS_TO_OY_LABEL = {
   '4001': 'OY4',
 };
 
+// Per-RD Option Year date ranges. The OY boundary determines
+// which CLINS_PM_ANNUAL figure applies for an invoice period —
+// NOT the dominant CLIN year section of period sites, which can
+// lag actual contract rolls in the workbook. Roll dates (each
+// RD's annual contract anniversary) confirmed by the maintainer:
+//   81st     → 1 Jan        (calendar year)
+//   99th     → 6 Sep
+//   63rd     → 7 Aug
+//   9th MSC  → 8 Jun
+// BY start uses the same anniversary (one year before OY1's
+// start). If you need to invoice a period that pre-dates BY
+// here (irregular pre-period between award and first OY), let
+// the maintainer know — the figures below are best-effort for
+// historical years and authoritative for the current OY3/OY4
+// boundary which is what the maintainer confirmed.
+const UTC = (y, m, d) => new Date(Date.UTC(y, m, d));
+const CLINS_OY_PERIODS = {
+  '63rd': {
+    BY:  { start: UTC(2021, 7, 7), end: UTC(2022, 7, 6) },  // 7 Aug 2021 – 6 Aug 2022
+    OY1: { start: UTC(2022, 7, 7), end: UTC(2023, 7, 6) },
+    OY2: { start: UTC(2023, 7, 7), end: UTC(2024, 7, 6) },
+    OY3: { start: UTC(2024, 7, 7), end: UTC(2025, 7, 6) },
+    OY4: { start: UTC(2025, 7, 7), end: UTC(2026, 7, 6) },
+  },
+  '81st': {
+    BY:  { start: UTC(2022, 0, 1),  end: UTC(2022, 11, 31) }, // 1 Jan 2022 – 31 Dec 2022
+    OY1: { start: UTC(2023, 0, 1),  end: UTC(2023, 11, 31) },
+    OY2: { start: UTC(2024, 0, 1),  end: UTC(2024, 11, 31) },
+    OY3: { start: UTC(2025, 0, 1),  end: UTC(2025, 11, 31) },
+    OY4: { start: UTC(2026, 0, 1),  end: UTC(2026, 11, 31) },
+  },
+  '99th': {
+    BY:  { start: UTC(2021, 8, 6), end: UTC(2022, 8, 5) },  // 6 Sep 2021 – 5 Sep 2022
+    OY1: { start: UTC(2022, 8, 6), end: UTC(2023, 8, 5) },
+    OY2: { start: UTC(2023, 8, 6), end: UTC(2024, 8, 5) },
+    OY3: { start: UTC(2024, 8, 6), end: UTC(2025, 8, 5) },
+    OY4: { start: UTC(2025, 8, 6), end: UTC(2026, 8, 5) },
+  },
+  '9th MSC': {
+    BY:  { start: UTC(2021, 5, 8), end: UTC(2022, 5, 7) },  // 8 Jun 2021 – 7 Jun 2022
+    OY1: { start: UTC(2022, 5, 8), end: UTC(2023, 5, 7) },
+    OY2: { start: UTC(2023, 5, 8), end: UTC(2024, 5, 7) },
+    OY3: { start: UTC(2024, 5, 8), end: UTC(2025, 5, 7) },
+    OY4: { start: UTC(2025, 5, 8), end: UTC(2026, 5, 7) },
+  },
+};
+
 // Determine which OY an RD's invoice period falls under, by
-// counting CLIN year sections of sites with any submittal date
-// (PSC / PSC-Accept / Draft / Final IHA) inside the period.
-// Mirrors the dominant-year heuristic already used by the
-// by-CLIN PM attribution in computeInvoiceByClin. Falls back to
-// the most-frequent year section across ALL sites for the RD if
-// none have period activity; finally to null if the RD has no
-// sites at all.
+// computing day-overlap between the period and each OY's date
+// range (the per-RD contract calendar in CLINS_OY_PERIODS) and
+// picking the OY with the most overlapping days. This handles
+// periods that straddle an OY boundary (e.g., 81st's Dec→Jan
+// roll) by attributing PM to the OY that covers more of the
+// invoice period. Returns null if the period falls outside all
+// OY ranges for the RD (no PM dollars charged).
 function getDominantOyForRdInPeriod(rd) {
-  if (!invoiceData || !invoiceData.rawByRd || !invoiceData.rawByRd[rd]) return null;
+  if (!invoiceData) return null;
   const period = invoiceData.period;
   if (!period || !(period.start instanceof Date) || !(period.end instanceof Date)) return null;
-  const rawById = new Map();
-  for (const r of invoiceData.rawByRd[rd]) rawById.set(r.id, r);
-  const inPeriod = (serial) => {
-    if (serial == null) return false;
-    const d = excelToDate(serial);
-    return d instanceof Date && d >= period.start && d <= period.end;
-  };
-  const counts = {};
-  for (const s of allSites) {
-    if (s.rd !== rd) continue;
-    const raw = rawById.get(s.id);
-    if (!raw) continue;
-    if (!inPeriod(raw.psc) && !inPeriod(raw.pscAccept)
-        && !inPeriod(raw.draft) && !inPeriod(raw.ihaApp)) continue;
-    const clin = getCLIN(s);
-    if (!clin) continue;
-    const ys = clin.substring(0, 4);
-    if (!YS_TO_OY_LABEL[ys]) continue;
-    counts[ys] = (counts[ys] || 0) + 1;
-  }
-  // No period activity → fall back to dominant year across all
-  // sites for this RD so the Invoice tab still shows the right
-  // OY's PM when the period happens to fall in a quiet stretch.
-  if (Object.keys(counts).length === 0) {
-    for (const s of allSites) {
-      if (s.rd !== rd) continue;
-      const clin = getCLIN(s);
-      if (!clin) continue;
-      const ys = clin.substring(0, 4);
-      if (!YS_TO_OY_LABEL[ys]) continue;
-      counts[ys] = (counts[ys] || 0) + 1;
+  const periods = CLINS_OY_PERIODS[rd];
+  if (!periods) return null;
+  let bestOy = null;
+  let bestDays = 0;
+  for (const [oy, range] of Object.entries(periods)) {
+    const overlapStart = period.start > range.start ? period.start : range.start;
+    const overlapEnd   = period.end   < range.end   ? period.end   : range.end;
+    const ms = overlapEnd.getTime() - overlapStart.getTime();
+    if (ms < 0) continue;
+    // +1 day so single-day overlaps count as 1, not 0.
+    const days = Math.floor(ms / 86400000) + 1;
+    if (days > bestDays) {
+      bestDays = days;
+      bestOy = oy;
     }
   }
-  let bestYs = null, bestCnt = -1;
-  for (const [ys, cnt] of Object.entries(counts)) {
-    if (cnt > bestCnt || (cnt === bestCnt && (bestYs == null || ys > bestYs))) {
-      bestYs = ys;
-      bestCnt = cnt;
-    }
-  }
-  return bestYs ? YS_TO_OY_LABEL[bestYs] : null;
+  return bestOy;
 }
 
 // PM monthly dollars for an RD = CLINS annual for the period's
