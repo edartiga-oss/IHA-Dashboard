@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v61</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v62</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -4520,7 +4520,13 @@ function computeInvoiceByMonth(companyFilter) {
       for (const row of rows) {
         sum += dollarsForRow(row, start, end, companyFilter, rd);
       }
-      sum += pmShareForMonth(rd, companyFilter, year, monthIdx);
+      // Only charge PM for months with MORE than 20 days in
+      // the period (same 20-day rule the top totals use), so
+      // by-month sums match the period total to the dollar.
+      const daysInPeriod = Math.floor((end - start) / 86400000) + 1;
+      if (daysInPeriod > 20) {
+        sum += pmShareForMonth(rd, companyFilter, year, monthIdx);
+      }
       return sum;
     });
     byRd[rd] = monthDollars;
@@ -6069,12 +6075,28 @@ function renderInvoice() {
   let byMonthSectionHtml = '';
   if (invoiceShowByMonth) {
     const monthly = computeInvoiceByMonth(compFilter);
-    const monthHeaders = monthly.months.map(mo => `<th class="num">${escapeHtml(mo.label)}</th>`).join('');
-    const monthColCount = monthly.months.length;
-    const monthColTotals = monthly.months.map(() => 0);
+    // Hide month columns where every visible RD contributes
+    // $0 — those months don't roll into the period total
+    // (no qualifying PM and no PSC/IHA activity), so showing
+    // them just adds noise and would make the by-month sum
+    // diverge from the top total. See the 20-day rule note
+    // in pmShareForMonth.
+    const visibleColIdx = monthly.months.reduce((acc, _, i) => {
+      const anyNonZero = rdsAvailable.some(rd => {
+        const arr = monthly.byRd[rd];
+        return arr && arr[i] !== 0;
+      });
+      if (anyNonZero) acc.push(i);
+      return acc;
+    }, []);
+    const visibleMonths = visibleColIdx.map(i => monthly.months[i]);
+    const monthHeaders = visibleMonths.map(mo => `<th class="num">${escapeHtml(mo.label)}</th>`).join('');
+    const monthColCount = visibleMonths.length;
+    const monthColTotals = visibleMonths.map(() => 0);
     let monthGrandTotal = 0;
     const monthlyRowsHtml = rdsAvailable.map(rd => {
-      const arr = monthly.byRd[rd] || monthly.months.map(() => 0);
+      const fullArr = monthly.byRd[rd] || monthly.months.map(() => 0);
+      const arr = visibleColIdx.map(i => fullArr[i]);
       const rowTotal = arr.reduce((a, b) => a + b, 0);
       arr.forEach((v, i) => monthColTotals[i] += v);
       monthGrandTotal += rowTotal;
@@ -6115,9 +6137,12 @@ function renderInvoice() {
         </table>
         <div style="padding: 6px 4px 0; font-size: 11px; color: var(--ink-mute); font-style: italic;">
           First and last months are clipped to the period boundaries
-          for PSC + Reports matching. PM dollars are a flat monthly
-          retainer — each month gets the full amount from the WIP
-          tab regardless of partial coverage.
+          for PSC + Reports matching. PM dollars follow the
+          <strong>20-day rule</strong> — a calendar month only
+          receives PM when more than 20 days of it fall inside the
+          period, so the by-month sum equals the period total above
+          to the dollar. Months that contribute $0 across every
+          visible RD are hidden.
         </div>
       </div>
     `;
@@ -7549,19 +7574,16 @@ function _lastCalendarMonthForOy(rd, oy) {
 // PM dollars for an RD over the entire invoice period. Walks
 // calendar months in the period and sums per-month amounts
 // (whole-dollar ceil + last-month remainder rule above).
-// Honors the existing 20-day rule: a calendar month only
-// contributes if more than 20 days of it fall inside the
-// invoice period. If no months qualify (very short periods
-// that straddle a boundary), falls back to the period
-// midpoint's calendar month at the ceil rate so we still
-// charge one month of PM (matches the floor-of-1 behavior of
-// getPeriodMonthCount).
+// Honors the 20-day rule: a calendar month only contributes
+// if more than 20 days of it fall inside the invoice period.
+// If no months qualify (period shorter than 21 days of any
+// calendar month), PM = $0 — by-month view applies the same
+// rule, so both views agree to the dollar.
 function getPmDollarsForRdInPeriod(rd) {
   if (!invoiceData) return 0;
   const period = invoiceData.period;
   if (!period || !(period.start instanceof Date) || !(period.end instanceof Date)) return 0;
   let total = 0;
-  let qualified = 0;
   let y = period.start.getUTCFullYear();
   let m = period.start.getUTCMonth();
   const endY = period.end.getUTCFullYear();
@@ -7574,13 +7596,8 @@ function getPmDollarsForRdInPeriod(rd) {
     const days = Math.floor((ce - cs) / 86400000) + 1;
     if (days > 20) {
       total += getPmDollarsForRdInCalendarMonth(rd, y, m);
-      qualified++;
     }
     m++; if (m > 11) { m = 0; y++; }
-  }
-  if (qualified === 0) {
-    const mid = new Date((period.start.getTime() + period.end.getTime()) / 2);
-    total = getPmDollarsForRdInCalendarMonth(rd, mid.getUTCFullYear(), mid.getUTCMonth());
   }
   return total;
 }
