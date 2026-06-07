@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v63</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v64</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -7454,26 +7454,26 @@ const YS_TO_OY_LABEL = {
 // Per-RD Option Year date ranges. The OY boundary determines
 // which CLINS_PM_ANNUAL figure applies for an invoice period —
 // NOT the dominant CLIN year section of period sites, which can
-// lag actual contract rolls in the workbook. Roll dates (each
-// RD's annual contract anniversary) confirmed by the maintainer:
-//   81st     → 1 Jan        (calendar year)
-//   99th     → 6 Sep
-//   63rd     → 7 Aug
-//   9th MSC  → 8 Jun
-// BY start uses the same anniversary (one year before OY1's
-// start). If you need to invoice a period that pre-dates BY
-// here (irregular pre-period between award and first OY), let
-// the maintainer know — the figures below are best-effort for
-// historical years and authoritative for the current OY3/OY4
-// boundary which is what the maintainer confirmed.
+// lag actual contract rolls in the workbook. Each RD has its
+// own annual anniversary; the OY3 → OY4 roll happens in 2026
+// for every RD per the maintainer:
+//   81st     → 1 Jan 2026  (calendar-year aligned)
+//   99th     → 6 Sep 2026
+//   63rd     → 7 Aug 2026
+//   9th MSC  → 8 Jun 2026
+// BY-OY2 mirror the anniversary, working backwards. OY4 extends
+// one year past OY3's end. If a contract gets extended past
+// OY4's end here, or you need to invoice a period that pre-dates
+// BY (irregular pre-period between award and the first OY), let
+// the maintainer know.
 const UTC = (y, m, d) => new Date(Date.UTC(y, m, d));
 const CLINS_OY_PERIODS = {
   '63rd': {
-    BY:  { start: UTC(2021, 7, 7), end: UTC(2022, 7, 6) },  // 7 Aug 2021 – 6 Aug 2022
-    OY1: { start: UTC(2022, 7, 7), end: UTC(2023, 7, 6) },
-    OY2: { start: UTC(2023, 7, 7), end: UTC(2024, 7, 6) },
-    OY3: { start: UTC(2024, 7, 7), end: UTC(2025, 7, 6) },
-    OY4: { start: UTC(2025, 7, 7), end: UTC(2026, 7, 6) },
+    BY:  { start: UTC(2022, 7, 7), end: UTC(2023, 7, 6) },  // 7 Aug 2022 – 6 Aug 2023
+    OY1: { start: UTC(2023, 7, 7), end: UTC(2024, 7, 6) },
+    OY2: { start: UTC(2024, 7, 7), end: UTC(2025, 7, 6) },
+    OY3: { start: UTC(2025, 7, 7), end: UTC(2026, 7, 6) },
+    OY4: { start: UTC(2026, 7, 7), end: UTC(2027, 7, 6) },
   },
   '81st': {
     BY:  { start: UTC(2022, 0, 1),  end: UTC(2022, 11, 31) }, // 1 Jan 2022 – 31 Dec 2022
@@ -7483,18 +7483,18 @@ const CLINS_OY_PERIODS = {
     OY4: { start: UTC(2026, 0, 1),  end: UTC(2026, 11, 31) },
   },
   '99th': {
-    BY:  { start: UTC(2021, 8, 6), end: UTC(2022, 8, 5) },  // 6 Sep 2021 – 5 Sep 2022
-    OY1: { start: UTC(2022, 8, 6), end: UTC(2023, 8, 5) },
-    OY2: { start: UTC(2023, 8, 6), end: UTC(2024, 8, 5) },
-    OY3: { start: UTC(2024, 8, 6), end: UTC(2025, 8, 5) },
-    OY4: { start: UTC(2025, 8, 6), end: UTC(2026, 8, 5) },
+    BY:  { start: UTC(2022, 8, 6), end: UTC(2023, 8, 5) },  // 6 Sep 2022 – 5 Sep 2023
+    OY1: { start: UTC(2023, 8, 6), end: UTC(2024, 8, 5) },
+    OY2: { start: UTC(2024, 8, 6), end: UTC(2025, 8, 5) },
+    OY3: { start: UTC(2025, 8, 6), end: UTC(2026, 8, 5) },
+    OY4: { start: UTC(2026, 8, 6), end: UTC(2027, 8, 5) },
   },
   '9th MSC': {
-    BY:  { start: UTC(2021, 5, 8), end: UTC(2022, 5, 7) },  // 8 Jun 2021 – 7 Jun 2022
-    OY1: { start: UTC(2022, 5, 8), end: UTC(2023, 5, 7) },
-    OY2: { start: UTC(2023, 5, 8), end: UTC(2024, 5, 7) },
-    OY3: { start: UTC(2024, 5, 8), end: UTC(2025, 5, 7) },
-    OY4: { start: UTC(2025, 5, 8), end: UTC(2026, 5, 7) },
+    BY:  { start: UTC(2022, 5, 8), end: UTC(2023, 5, 7) },  // 8 Jun 2022 – 7 Jun 2023
+    OY1: { start: UTC(2023, 5, 8), end: UTC(2024, 5, 7) },
+    OY2: { start: UTC(2024, 5, 8), end: UTC(2025, 5, 7) },
+    OY3: { start: UTC(2025, 5, 8), end: UTC(2026, 5, 7) },
+    OY4: { start: UTC(2026, 5, 8), end: UTC(2027, 5, 7) },
   },
 };
 
