@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v66</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v67</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -3375,11 +3375,18 @@ function parseSiteFinancials(wb) {
       draftFinalReportForm7: findCol('Draft Final IHA Report Form 7 Received 5 Days'),
       finalReportSubmitted:  findCol('Final IHA Report w/ Form 7 Submitted 5 Days'),
       ihaApproved:           findCol('Final IHA Report Approved 30% 5 Days'),
+      // Period of Performance — per-site POP date column in
+      // the per-RD/MSC sheet (e.g., column BG in 9th MSC's
+      // tab, headered "POP"). Takes precedence over the
+      // RD-level max-POP read from the POPs tab. Falls back
+      // to the POPs tab value when blank for an individual
+      // site.
+      pop:                   findCol('POP'),
     };
     // Diagnostic: log which date column resolved per sheet so the user
     // can verify the merge is finding the right columns. Open DevTools
     // after loading the workbook.
-    const dateKeys = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved'];
+    const dateKeys = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop'];
     const dateColResolution = {};
     for (const k of dateKeys) {
       dateColResolution[k] = i[k] >= 0 ? `col ${i[k]}: "${headers[i[k]]}"` : 'NOT FOUND';
@@ -3494,7 +3501,7 @@ function parseSiteFinancials(wb) {
     // This implements the per-RD-primary, AllSites-secondary policy
     // for every consumer of these fields (Sites List, Invoice math,
     // QA check, modal) without each having to do its own fallback.
-    const dateFields = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved'];
+    const dateFields = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop'];
     for (const k of dateFields) {
       if (bucket[k] instanceof Date) s[k] = bucket[k];
     }
@@ -6815,17 +6822,20 @@ const SITES_LIST_COLS = [
     filterType: 'dateRange', filterValue: s => s.start || null },
   { key: 'endDate',  label: 'End Date',        cls: '',     get: s => s.end   ? fmtDate(s.end)   : '',
     filterType: 'dateRange', filterValue: s => s.end || null },
-  // Period of Performance — sourced from the POPs sheet, one date per
-  // RD/MSC. All sites in a given RD share the same POP date; this is
-  // intentional and useful for "which RDs are ending soon" scans.
-  // Resolved dynamically via rdPops at render time so it reflects the
-  // current workbook (and disappears as "—" when the POPs sheet was
-  // missing on load).
+  // Period of Performance — per-site POP from the per-RD/MSC
+  // sheet's "POP" column (e.g., 9th MSC's column BG), wired
+  // through parseSiteFinancials. Falls back to the RD-level
+  // max POP from the POPs tab (rdPops[s.rd]) when the per-RD
+  // sheet's POP cell is blank — useful when a workbook only
+  // has the legacy POPs tab populated.
   { key: 'popDate',  label: 'POP Date',        cls: '',
-    get:         s => rdPops[s.rd] ? fmtDate(rdPops[s.rd]) : '',
-    sortGet:     s => rdPops[s.rd] ? rdPops[s.rd].getTime() : null,
+    get:         s => (s.pop instanceof Date) ? fmtDate(s.pop)
+                    : (rdPops[s.rd] ? fmtDate(rdPops[s.rd]) : ''),
+    sortGet:     s => (s.pop instanceof Date) ? s.pop.getTime()
+                    : (rdPops[s.rd] ? rdPops[s.rd].getTime() : null),
     filterType:  'dateRange',
-    filterValue: s => rdPops[s.rd] || null },
+    filterValue: s => (s.pop instanceof Date) ? s.pop
+                    : (rdPops[s.rd] || null) },
   // Milestone-date columns. Display via fmtDate (MM/DD/YYYY); sort via
   // raw .getTime() so chronological order is correct across year
   // boundaries — sorting the formatted string would put 01/15/2026
