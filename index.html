@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v67</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v68</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -3382,11 +3382,19 @@ function parseSiteFinancials(wb) {
       // to the POPs tab value when blank for an individual
       // site.
       pop:                   findCol('POP'),
+      // Per-site Start / End dates from the per-RD/MSC sheet
+      // (typically columns E and F). The Master Schedule's
+      // AllSites tab also carries Start/End columns, but the
+      // per-RD sheets are the source of truth — when set,
+      // they override the AllSites values. Falls back to the
+      // AllSites date when blank for an individual site.
+      start:                 findCol('Start Date'),
+      end:                   findCol('End Date'),
     };
     // Diagnostic: log which date column resolved per sheet so the user
     // can verify the merge is finding the right columns. Open DevTools
     // after loading the workbook.
-    const dateKeys = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop'];
+    const dateKeys = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop','start','end'];
     const dateColResolution = {};
     for (const k of dateKeys) {
       dateColResolution[k] = i[k] >= 0 ? `col ${i[k]}: "${headers[i[k]]}"` : 'NOT FOUND';
@@ -3501,7 +3509,7 @@ function parseSiteFinancials(wb) {
     // This implements the per-RD-primary, AllSites-secondary policy
     // for every consumer of these fields (Sites List, Invoice math,
     // QA check, modal) without each having to do its own fallback.
-    const dateFields = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop'];
+    const dateFields = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop','start','end'];
     for (const k of dateFields) {
       if (bucket[k] instanceof Date) s[k] = bucket[k];
     }
