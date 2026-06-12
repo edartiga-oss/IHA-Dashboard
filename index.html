@@ -91,6 +91,20 @@
     right: 10px;
   }
   .file-zone { display: flex; align-items: center; gap: 12px; }
+  /* "Cloud: updated <timestamp>" hint shown next to the Load
+     from Cloud button so the user can see how fresh the cloud
+     copy is at a glance without clicking. Populated by
+     peekCloudWorkbook on page load. */
+  .cloud-hint {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: #fff;
+    opacity: 0.65;
+    line-height: 1.2;
+    max-width: 160px;
+    white-space: normal;
+  }
+  .cloud-hint:empty { display: none; }
   .file-info {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
@@ -2463,7 +2477,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v69</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v70</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -2475,6 +2489,7 @@
     <button class="upload-btn" onclick="fetchWorkbookFromDrive()" data-cloud-url-target title="Fetch the latest .xlsx from Drive">
       Load from Cloud
     </button>
+    <span id="cloudHeaderHint" class="cloud-hint" title=""></span>
     <button class="upload-btn" onclick="setCloudWorkbookUrl()" title="Set / change the Apps Script Web App URL" style="background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);padding:6px 10px;">
       ⚙
     </button>
@@ -2923,7 +2938,7 @@ async function fetchWorkbookFromDrive() {
 // full workbook.
 async function peekCloudWorkbook() {
   const el = document.getElementById('cloudFilePreview');
-  if (!el) return;
+  const hint = document.getElementById('cloudHeaderHint');
   const base = getCloudStateUrl();
   const url = base + (base.includes('?') ? '&' : '?') + 'action=masterInfo';
   try {
@@ -2935,7 +2950,8 @@ async function peekCloudWorkbook() {
       throw new Error(parsed && parsed.error ? parsed.error : 'unexpected response');
     }
     if (parsed.empty) {
-      el.innerHTML = '<em>No .xlsx found in the configured Drive folder.</em>';
+      if (el)   el.innerHTML = '<em>No .xlsx found in the configured Drive folder.</em>';
+      if (hint) { hint.textContent = 'no .xlsx in cloud'; hint.title = 'No .xlsx found in the configured Drive folder.'; }
       return;
     }
     const mtime = parsed.mtime ? new Date(parsed.mtime) : null;
@@ -2955,12 +2971,24 @@ async function peekCloudWorkbook() {
       }
     }
     const sizeKb = typeof parsed.size === 'number' ? ' · ' + Math.round(parsed.size / 1024).toLocaleString() + ' KB' : '';
-    el.innerHTML = 'Latest in cloud: <strong>' + escapeHtml(parsed.name || '(unnamed)') + '</strong>'
-      + (when ? ' · updated ' + escapeHtml(when) : '')
-      + sizeKb;
+    if (el) {
+      el.innerHTML = 'Latest in cloud: <strong>' + escapeHtml(parsed.name || '(unnamed)') + '</strong>'
+        + (when ? ' · updated ' + escapeHtml(when) : '')
+        + sizeKb;
+    }
+    // Compact header hint — same info, sized for the header.
+    // Full filename + size goes in the tooltip so the inline
+    // text stays short.
+    if (hint) {
+      hint.textContent = when ? ('Cloud: ' + when) : 'Cloud: (unknown date)';
+      hint.title = 'Latest in cloud: ' + (parsed.name || '(unnamed)')
+        + (when ? ' · updated ' + when : '')
+        + (typeof parsed.size === 'number' ? ' · ' + Math.round(parsed.size / 1024).toLocaleString() + ' KB' : '');
+    }
   } catch (err) {
     console.warn('[cloud peek] failed', err);
-    el.innerHTML = 'Cloud peek failed: ' + escapeHtml(err.message);
+    if (el)   el.innerHTML = 'Cloud peek failed: ' + escapeHtml(err.message);
+    if (hint) { hint.textContent = 'Cloud: unreachable'; hint.title = 'Cloud peek failed: ' + err.message; }
   }
 }
 
