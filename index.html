@@ -2477,7 +2477,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v70</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v71</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -3537,10 +3537,19 @@ function parseSiteFinancials(wb) {
     // This implements the per-RD-primary, AllSites-secondary policy
     // for every consumer of these fields (Sites List, Invoice math,
     // QA check, modal) without each having to do its own fallback.
-    const dateFields = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop','start','end'];
+    const dateFields = ['sitePlansDraft','sitePlansFinal','draftPSC','pscForm7','pscAccept','draftReport','draftReportForm7','draftFinalReport','draftFinalReportForm7','finalReportSubmitted','ihaApproved','pop'];
     for (const k of dateFields) {
       if (bucket[k] instanceof Date) s[k] = bucket[k];
     }
+    // Start / End: per-RD-ONLY, no AllSites fallback. When the
+    // per-RD sheet's cell is blank or carries a non-date string
+    // (e.g., "Cannot perform pass the POP"), s.start / s.end
+    // become null — the AllSites value is intentionally cleared
+    // so the Sites List reflects exactly what the per-RD sheet
+    // shows. This is different from the other milestone dates,
+    // which still fall back to AllSites when per-RD is blank.
+    s.start = bucket.start instanceof Date ? bucket.start : null;
+    s.end   = bucket.end   instanceof Date ? bucket.end   : null;
     // Team: per-RD primary, AllSites fallback. Per-RD sheets are
     // typically the most up-to-date source as the schedule is
     // edited — when both have values, the per-RD value wins.
