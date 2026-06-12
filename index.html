@@ -2463,7 +2463,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v68</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v69</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -9371,7 +9371,7 @@ function isFilterActive(filterType, val) {
   if (filterType === 'text')      return typeof val === 'string' && val.trim().length > 0;
   if (filterType === 'select')    return Array.isArray(val) && val.length > 0;
   if (filterType === 'numRange')  return val.min != null || val.max != null;
-  if (filterType === 'dateRange') return val.after != null || val.before != null;
+  if (filterType === 'dateRange') return val.mode === 'blanks' || val.after != null || val.before != null;
   return false;
 }
 
@@ -9415,10 +9415,16 @@ function applyColumnFilters(viewKey, sites) {
         if (val.min != null && n < val.min) return false;
         if (val.max != null && n > val.max) return false;
       } else if (col.filterType === 'dateRange') {
-        if (!(v instanceof Date)) return false;
-        const t = v.getTime();
-        if (val.after  != null && t < val.after.getTime())  return false;
-        if (val.before != null && t > val.before.getTime()) return false;
+        if (val.mode === 'blanks') {
+          // "Blanks only" mode — match rows where this column
+          // has no date (null, undefined, or non-Date value).
+          if (v instanceof Date) return false;
+        } else {
+          if (!(v instanceof Date)) return false;
+          const t = v.getTime();
+          if (val.after  != null && t < val.after.getTime())  return false;
+          if (val.before != null && t > val.before.getTime()) return false;
+        }
       }
     }
     return true;
@@ -10967,8 +10973,8 @@ function openFilterPopover(viewKey, colKey, anchorEl) {
       : { min: null, max: null };
   } else if (col.filterType === 'dateRange') {
     pendingFilterValue = saved
-      ? { after: saved.after || null, before: saved.before || null }
-      : { after: null, before: null };
+      ? { after: saved.after || null, before: saved.before || null, mode: saved.mode || null }
+      : { after: null, before: null, mode: null };
   }
 
   // Build the popover element and position it under the anchor.
@@ -11002,6 +11008,19 @@ function openFilterPopover(viewKey, colKey, anchorEl) {
   // Auto-focus the first input for fast keyboard use.
   const firstInput = pop.querySelector('input,select,textarea');
   if (firstInput) firstInput.focus();
+}
+
+// Re-render the open popover in place — used when a control
+// inside the popover (e.g. the date "Blanks only" checkbox)
+// needs to toggle other inputs' enabled state. Preserves
+// pendingFilterValue / pendingFilterViewKey / pendingFilterColKey
+// so the user's in-flight edits aren't lost.
+function renderFilterPopover() {
+  const pop = document.getElementById('sl-filter-popover');
+  if (!pop || !pendingFilterColKey) return;
+  const col = SITES_LIST_COLS.find(c => c.key === pendingFilterColKey);
+  if (!col) return;
+  pop.innerHTML = renderFilterPopoverInner(col);
 }
 
 function closeFilterPopover() {
@@ -11109,18 +11128,34 @@ function renderFilterPopoverInner(col) {
       const day = String(d.getUTCDate()).padStart(2, '0');
       return `${d.getUTCFullYear()}-${m}-${day}`;
     };
+    const blanksOnly = v.mode === 'blanks';
+    // "Blanks only" disables and clears the date inputs since
+    // they're meaningless when matching rows that have no date.
+    // Toggling it off restores the inputs at empty (a no-op
+    // filter the user can then narrow with after/before).
     body = `
       <div class="sl-filter-section">
+        <label class="sl-filter-blanks-toggle" style="display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;font-size:12px;">
+          <input type="checkbox" ${blanksOnly ? 'checked' : ''}
+            onchange="
+              pendingFilterValue.mode = this.checked ? 'blanks' : null;
+              if (this.checked) { pendingFilterValue.after = null; pendingFilterValue.before = null; }
+              renderFilterPopover();
+            ">
+          <span>Show only rows with blank ${escapeHtml(col.label)}</span>
+        </label>
         <div class="sl-filter-range-row">
           <label>After</label>
           <input type="date" class="sl-filter-input"
             value="${fmt(v.after)}"
+            ${blanksOnly ? 'disabled' : ''}
             oninput="pendingFilterValue.after = this.value ? new Date(this.value + 'T00:00:00Z') : null">
         </div>
         <div class="sl-filter-range-row">
           <label>Before</label>
           <input type="date" class="sl-filter-input"
             value="${fmt(v.before)}"
+            ${blanksOnly ? 'disabled' : ''}
             oninput="pendingFilterValue.before = this.value ? new Date(this.value + 'T23:59:59Z') : null">
         </div>
       </div>
