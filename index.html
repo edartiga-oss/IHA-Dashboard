@@ -705,7 +705,16 @@
     padding: 8px 8px;
   }
   .dash-rs-top tbody td {
-    padding: 8px 10px;
+    padding: 10px 10px;
+    font-size: 15px;
+  }
+  /* Past-Due numbers > 0 anywhere in the Report Status views
+     (top RD-level table + by-IH cards) — bright red, bold so
+     the maintainer's eye lands on real backlog at a glance. */
+  .dash-rs-top td.pd-flag,
+  .rs-ih-card .dash-rs-ih td.num.pd-flag {
+    color: #d11313;
+    font-weight: 800;
   }
 
   /* Report Status — by-IH cards (Past Due / Currently Reviewed) */
@@ -744,9 +753,9 @@
   }
   .rs-ih-card .dash-rs-ih thead th.num { text-align: right; }
   .rs-ih-card .dash-rs-ih tbody td {
-    padding: 6px 12px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--line);
-    font-size: 13px;
+    font-size: 15px;
   }
   .rs-ih-card .dash-rs-ih tbody tr.rs-ih-section td {
     background: var(--bg-soft);
@@ -761,8 +770,9 @@
   .rs-ih-card .dash-rs-ih tbody tr.rs-ih-section.pika td  { background: #fde4cf; color: #6b3410; }
   .rs-ih-card .dash-rs-ih tbody tr.rs-ih-section.tt td    { background: #d4eccd; color: #2c5e1a; }
   .rs-ih-card .dash-rs-ih tbody tr.rs-ih-section.battelle td { background: #fef2cb; color: #6b5410; }
-  /* Highlight non-zero counts in the "Past Due" IH table */
-  .rs-ih-card .dash-rs-ih td.num.pd-flag { color: #c0392b; font-weight: 700; }
+  /* (Past Due > 0 styling is defined above in the shared
+     .dash-rs-top / .rs-ih-card pd-flag rule so the top RD
+     table and the by-IH cards visually match.) */
   .rs-ih-role {
     display: inline-block;
     font-size: 9px;
@@ -2477,7 +2487,7 @@
     <span class="tag" id="headerTag">No workbook loaded</span>
   </div>
   <div class="file-zone">
-    <span class="app-version" id="appVersion" title="Dashboard version">v71</span>
+    <span class="app-version" id="appVersion" title="Dashboard version">v72</span>
     <div class="file-info" id="fileInfo"></div>
     <button class="upload-btn" id="settingsBtn" onclick="openSettings()" title="Customize site detail card" style="display:none;background:transparent;border:1px solid var(--accent-soft);color:var(--accent-soft);">
       ⚙ Settings
@@ -6580,6 +6590,10 @@ function renderReportStatus() {
   }
   const d = reportStatusData;
   const fmt = n => n == null ? '—' : Number(n).toLocaleString();
+  // Class helper for the top RD table's past-due cells: adds
+  // pd-flag (bright red + bold) when the count is non-zero so
+  // real backlog jumps off the page.
+  const pdCls = n => 'num' + ((typeof n === 'number' && n > 0) ? ' pd-flag' : '');
   const asOfStr = d.asOf ? fmtDate(d.asOf) : '';
 
   // Group the IH-by-name rows into PIKA / Tetra Tech / Battelle blocks.
@@ -6657,12 +6671,12 @@ function renderReportStatus() {
                 <td class="num">${fmt(r.totalReports)}</td>
                 <td class="num">${fmt(r.approvedCEHNC)}</td>
                 <td class="num">${fmt(r.currentCEHNC)}</td>
-                <td class="num" style="border-left:2px solid var(--accent);font-weight:600;">${fmt(r.pastDue)}</td>
-                <td class="num">${fmt(r.pastDuePIKA)}</td>
-                <td class="num">${fmt(r.pastDueTT)}</td>
-                <td class="num">${fmt(r.pastDueBAT)}</td>
-                <td class="num">${fmt(r.pastDueLead)}</td>
-                <td class="num">${fmt(r.pastDueCIH)}</td>
+                <td class="${pdCls(r.pastDue)}" style="border-left:2px solid var(--accent);">${fmt(r.pastDue)}</td>
+                <td class="${pdCls(r.pastDuePIKA)}">${fmt(r.pastDuePIKA)}</td>
+                <td class="${pdCls(r.pastDueTT)}">${fmt(r.pastDueTT)}</td>
+                <td class="${pdCls(r.pastDueBAT)}">${fmt(r.pastDueBAT)}</td>
+                <td class="${pdCls(r.pastDueLead)}">${fmt(r.pastDueLead)}</td>
+                <td class="${pdCls(r.pastDueCIH)}">${fmt(r.pastDueCIH)}</td>
                 <td class="num" style="border-left:2px solid var(--accent);font-weight:600;">${fmt(r.current)}</td>
                 <td class="num">${fmt(r.currentPIKA)}</td>
                 <td class="num">${fmt(r.currentTT)}</td>
@@ -6679,12 +6693,12 @@ function renderReportStatus() {
               <td class="num">${fmt(totalRow.totalReports)}</td>
               <td class="num">${fmt(totalRow.approvedCEHNC)}</td>
               <td class="num">${fmt(totalRow.currentCEHNC)}</td>
-              <td class="num" style="border-left:2px solid var(--accent);">${fmt(totalRow.pastDue)}</td>
-              <td class="num">${fmt(totalRow.pastDuePIKA)}</td>
-              <td class="num">${fmt(totalRow.pastDueTT)}</td>
-              <td class="num">${fmt(totalRow.pastDueBAT)}</td>
-              <td class="num">${fmt(totalRow.pastDueLead)}</td>
-              <td class="num">${fmt(totalRow.pastDueCIH)}</td>
+              <td class="${pdCls(totalRow.pastDue)}" style="border-left:2px solid var(--accent);">${fmt(totalRow.pastDue)}</td>
+              <td class="${pdCls(totalRow.pastDuePIKA)}">${fmt(totalRow.pastDuePIKA)}</td>
+              <td class="${pdCls(totalRow.pastDueTT)}">${fmt(totalRow.pastDueTT)}</td>
+              <td class="${pdCls(totalRow.pastDueBAT)}">${fmt(totalRow.pastDueBAT)}</td>
+              <td class="${pdCls(totalRow.pastDueLead)}">${fmt(totalRow.pastDueLead)}</td>
+              <td class="${pdCls(totalRow.pastDueCIH)}">${fmt(totalRow.pastDueCIH)}</td>
               <td class="num" style="border-left:2px solid var(--accent);">${fmt(totalRow.current)}</td>
               <td class="num">${fmt(totalRow.currentPIKA)}</td>
               <td class="num">${fmt(totalRow.currentTT)}</td>
